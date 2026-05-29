@@ -9,9 +9,13 @@ class Bullet:public GameObject{
     public:
         void setDamage(const int D);
         void attack();
+        ~Bullet(); // 析构：需要移除实体碰撞箱
 };
 void Bullet::setDamage(const int D){
     damage = D;
 }
 
+Bullet::~Bullet(){
+
+}
 class bulletExample:public Bullet{};

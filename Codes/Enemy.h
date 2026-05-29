@@ -13,6 +13,7 @@ class Enemy:public GameObject{
         void getHurt(Bullet & b); // 受伤：检测子弹碰撞箱和自己是否有重合
         // 移动采用GameObject中的moveDown，自上而下匀速运动
         virtual void moveDown(qreal deltaTime);
+        ~Enemy(); // 析构：需要移除碰撞箱
 };
 void Enemy::healthInit(const int flags){
 
@@ -27,5 +28,9 @@ void Enemy::getHurt(Bullet & b){
 }
 
 void Enemy::moveDown(qreal deltaTime){
+
+}
+
+Enemy::~Enemy(){
     
 }
