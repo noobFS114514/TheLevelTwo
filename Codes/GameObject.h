@@ -2,69 +2,33 @@
 #include <QRectF>
 #include <QPointF>
 
-class GameObject{
-    // 游戏内实体：如 玩家本人 小怪 boss 等
-    // 属性：位置信息 移动信息 碰撞箱(Q) 等
-    // 接口：生成实体
+class GameObject {
 protected:
-    QPointF position;   // 实体位置（通常使用窗口坐标系）
-    qreal speed;        // 移动速率（每秒移动的像素数）
-    QRectF hitbox;      // 碰撞箱（其位置随实体position更新）
+    QPointF position;   // 实体位置
+    qreal speed = 0.0;  // 移动速率
+    QRectF hitbox;      // 碰撞箱
 
 public:
-    GameObject() = default;
-    virtual ~GameObject() = default;
+    GameObject() noexcept = default;
 
-    // 移动接口：按照speed速率随时间匀速移动，deltaTime 单位为秒
-    void moveLeft(qreal deltaTime);    // 向左移动
-    void moveRight(qreal deltaTime);   // 向右移动
-    void moveUp(qreal deltaTime);      // 向上移动
-    void moveDown(qreal deltaTime);    // 向下移动
+    // 【核心】必须保证虚析构函数有具体实现体，否则会产生未定义符号
+    virtual ~GameObject() noexcept {}
 
-    // 位置与碰撞箱访问接口
-    QPointF getPosition() const;              // 获取当前位置
-    void setPosition(const QPointF& pos);     // 设置当前位置
-    QRectF getHitbox() const;                 // 获取当前碰撞箱
+    // 所有虚移动接口，必须带上完整的 {} 实现
+    virtual void moveLeft(qreal deltaTime) { position.setX(position.x() - speed * deltaTime); }
+    virtual void moveRight(qreal deltaTime) { position.setX(position.x() + speed * deltaTime); }
+    virtual void moveUp(qreal deltaTime) { position.setY(position.y() - speed * deltaTime); }
+    virtual void moveDown(qreal deltaTime) { position.setY(position.y() + speed * deltaTime); }
 
-    // 修改实体移动速率的接口
-    void setSpeed(qreal speedValue, GameObject* obj);
+    // 访问接口
+    QPointF getPosition() const { return position; }
+    void setPosition(const QPointF& pos) { position = pos; }
+    QRectF getHitbox() const { return hitbox; }
 
-    // 生成实体：在窗口的特定位置生成相关的实体
-    virtual void spawnObject(const QPointF& pos);
+    // 补齐实现，防止链接器迷路
+    void setSpeed(qreal speedValue, GameObject* obj) {
+        if (obj) { obj->speed = speedValue; }
+    }
+
+    virtual void spawnObject(const QPointF& pos) { position = pos; }
 };
-
-GameObject::GameObject(){
-
-}
-
-void GameObject::moveLeft(qreal deltaTime){
-    position.setX(position.x() - speed * deltaTime);
-}
-
-void GameObject::moveRight(qreal deltaTime){
-    position.setX(position.x() + speed * deltaTime);
-}
-
-void GameObject::moveUp(qreal deltaTime){
-    position.setY(position.y() - speed * deltaTime);
-}
-
-void GameObject::moveDown(qreal deltaTime){
-    position.setY(position.y() + speed * deltaTime);
-}
-
-void GameObject::setSpeed(qreal speedValue, GameObject* obj){
-    obj->speed = speedValue;
-}
-
-void GameObject::setPosition(const QPointF& pos){
-    position = pos;
-}
-
-QPointF GameObject::getPosition() const{
-    return position;
-}
-
-QRectF GameObject::getHitbox() const{
-    return hitbox;
-}

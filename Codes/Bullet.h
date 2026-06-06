@@ -1,21 +1,26 @@
+#pragma once
 #include "GameObject.h"
-class Bullet:public GameObject{
-    // 子弹类
-    // public继承：位置 移动 碰撞箱
-    // 子类属性：子弹伤害 子弹种类（与武器有关，单独放到不同子类中）
-    // 对外接口：子弹攻击到目标实体
-    protected:
-        int damage;
-    public:
-        void setDamage(const int D);
-        void attack();
-        ~Bullet(); // 析构：需要移除实体碰撞箱
+class Bullet : public GameObject {
+protected:
+    int damage;
+public:
+    Bullet() noexcept {
+        damage = 1;
+        speed = 500.0;
+        hitbox = QRectF(0, 0, 8.0, 15.0); // 默认子弹大小
+    }
+
+    void setDamage(const int D) { damage = D; }
+    void attack() {}
+
+    // 子弹更新：向上飞并同步自身碰撞箱
+    void updateMovement(qreal deltaTime) {
+        moveUp(deltaTime);
+        hitbox.moveTo(position);
+    }
+
+    ~Bullet() noexcept override = default;
 };
-void Bullet::setDamage(const int D){
-    damage = D;
-}
 
-Bullet::~Bullet(){
 
-}
 class bulletExample:public Bullet{};
