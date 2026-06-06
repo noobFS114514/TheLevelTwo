@@ -33,6 +33,7 @@ void MainWindow::resetGame() {
 
     m_enemies.clear();
     m_bullets.clear();
+    m_powerUps.clear();
 
     m_player.spawnPlayer(730.0, 0.0, static_cast<qreal>(m_screenWidth));
 
@@ -87,6 +88,17 @@ void MainWindow::gameLoop() {
         else ++it;
     }
 
+    for (auto it = m_powerUps.begin(); it != m_powerUps.end();) {
+    it->moveDown(deltaTime);
+
+        if (it->getPosition().y() > m_screenHeight) {
+            it = m_powerUps.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+
     // 3. 碰撞仲裁
     checkCollisions();
     update();
@@ -103,11 +115,20 @@ void MainWindow::checkCollisions() {
                 enemyIt->getHurt(1);
                 bulletIt = m_bullets.erase(bulletIt);
                 if (enemyIt->isDead()) {
-                    m_score += enemyIt->getScoreValue(); // 加分 [cite: 7]
+                    m_score += enemyIt->getScoreValue();
+
+                    QPointF dropPos = enemyIt->getPosition();
+
+                    int chance = QRandomGenerator::global()->bounded(100);
+                    if (chance < 30) {
+                        m_powerUps.append(PowerUp(dropPos, PowerUpType::Heal));
+                    }
+
                     enemyIt = m_enemies.erase(enemyIt);
                     enemyDestroyed = true;
                     break;
-                }
+                }                
+
             } else { ++bulletIt; }
         }
         if (!enemyDestroyed) ++enemyIt;
@@ -122,6 +143,27 @@ void MainWindow::checkCollisions() {
             if (m_playerHp <= 0) { m_isGameOver = true; m_waveTimer->stop(); }
         } else { ++enemyIt; }
     }
+
+    QRectF playerHitbox = m_player.getHitbox();
+
+for (auto powerIt = m_powerUps.begin(); powerIt != m_powerUps.end();) {
+    if (powerIt->getHitbox().intersects(playerHitbox)) {
+        if (powerIt->getType() == PowerUpType::Heal) {
+            m_playerHp += 1;
+
+            if (m_playerHp > 5) {
+                m_playerHp = 5;
+            }
+
+            qDebug() << "PowerUp picked: HP +1";
+        }
+
+        powerIt = m_powerUps.erase(powerIt);
+    } else {
+        ++powerIt;
+    }
+}
+
 }
 
 void MainWindow::paintEvent(QPaintEvent *event) {
@@ -134,6 +176,11 @@ void MainWindow::paintEvent(QPaintEvent *event) {
     for (auto& enemy : m_enemies) {
         enemy.draw(painter);
     }
+
+    for (auto& powerUp : m_powerUps) {
+        powerUp.draw(painter);
+    }
+
 
     painter.setPen(QPen(QColor(86, 61, 22), 2));
     painter.setBrush(QColor(255, 218, 92));
