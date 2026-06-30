@@ -8,6 +8,7 @@
 #include "Player.h"
 #include "Enemy.h"
 #include "Bullet.h"
+#include "PowerUp.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -44,6 +45,7 @@ private:
     Player m_player;
     QList<Enemy> m_enemies;
     QList<Bullet> m_bullets; // 用于接收来自 Player 发射的子弹
+    QList<PowerUp> m_powerUps;
 
     // A3 计分与状态变量
     int m_score;
