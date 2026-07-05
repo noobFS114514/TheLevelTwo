@@ -29,7 +29,7 @@ void MainWindow::resetGame() {
     m_moveLeft = false;
     m_moveRight = false;
     m_shootCooldown = 0.25;
-    m_timeSinceLastShot = m_shootCooldown;
+    m_timeSinceLastShot = m_player.getFireCooldown();
 
     m_enemies.clear();
     m_bullets.clear();
@@ -224,6 +224,17 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
+    // 临时测试武器升级，后续由宝箱触发
+if (event->key() == Qt::Key_U && !m_isGameOver) {
+    m_player.increaseWeaponLevel();
+
+    qDebug() << "Weapon upgraded:"
+             << "level =" << m_player.getWeaponLevel()
+             << "bullet count =" << m_player.getWeapon().getBulletCount();
+
+    return;
+}
+
     if (event->key() == Qt::Key_Space && !m_isGameOver) {
         shootBullet();
         return;
@@ -259,20 +270,28 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
 
 void MainWindow::shootBullet()
 {
-    if (m_timeSinceLastShot < m_shootCooldown) {
+    const qreal cooldown = m_player.getFireCooldown();
+
+    if (m_timeSinceLastShot < cooldown) {
         return;
     }
 
-    Bullet bullet;
-    QPointF pPos = m_player.getPosition();
-    bullet.setPosition(QPointF(pPos.x() + 26, pPos.y() - 15));
-    bullet.setSpeed(500.0, &bullet);
+    const QRectF playerBox = m_player.getHitbox();
 
-    m_bullets.append(bullet);
+    const QPointF origin(
+        playerBox.center().x() - 4.0,
+        playerBox.top() - 15.0
+    );
+
+    m_player.getWeapon().fire(origin, m_bullets);
+
     m_timeSinceLastShot = 0.0;
 
-    qDebug() << "Space pressed: bullet fired";
+    qDebug() << "Space pressed:"
+             << m_player.getWeapon().getBulletCount()
+             << "bullet(s) fired";
 }
+
 
 void MainWindow::drawBackground(QPainter &painter)
 {

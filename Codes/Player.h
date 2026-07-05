@@ -6,6 +6,7 @@
 class Player : public GameObject {
 protected:
     Weapon weapon;
+    int weaponLevel = 1;
     int health = 3;
     qreal boundaryLeft = 0.0;
     qreal boundaryRight = 600.0;
@@ -15,6 +16,27 @@ public:
         speed = 300.0;
         hitbox = QRectF(0, 0, 112.0, 72.0);
     }
+
+    Weapon& getWeapon() {
+    return weapon;
+}
+
+const Weapon& getWeapon() const {
+    return weapon;
+}
+
+int getWeaponLevel() const {
+    return weaponLevel;
+}
+
+void increaseWeaponLevel() {
+    ++weaponLevel;
+    weapon.upgradeBulletCount(1);
+}
+
+qreal getFireCooldown() const {
+    return weapon.getAttackCooldown();
+}
 
     // 【核心】给队友的空壳接口全部补齐空实现体 {}
     void setHealth(const int H) { health = H; }
