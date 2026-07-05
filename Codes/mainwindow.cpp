@@ -19,8 +19,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_waveTimer, &QTimer::timeout, this, &MainWindow::spawnWave);
 
     m_highScore = SaveManager::loadHighScore();
+    m_sfxVolume = SaveManager::loadSfxVolume();
+    m_musicVolume = SaveManager::loadMusicVolume();
+    m_fullscreenEnabled = SaveManager::loadFullscreen();
+    m_selectedSetting = 0;
 
     resetGame();
+    applyWindowMode();
+
     m_gameState = GameState::Menu;
     m_gameTimer->stop();
     m_waveTimer->stop();
@@ -73,6 +79,24 @@ void MainWindow::updateHighScore()
         qDebug() << "New high score saved:" << m_highScore;
     }
 }
+
+void MainWindow::saveSettings()
+{
+    SaveManager::saveSettings(m_sfxVolume, m_musicVolume, m_fullscreenEnabled);
+}
+
+void MainWindow::applyWindowMode()
+{
+    if (m_fullscreenEnabled) {
+        showFullScreen();
+    } else {
+        showNormal();
+        setFixedSize(m_screenWidth, m_screenHeight);
+    }
+
+    update();
+}
+
 
 void MainWindow::startBossBattle()
 {
@@ -705,12 +729,15 @@ void MainWindow::paintEvent(QPaintEvent *event) {
 
 
     if (m_gameState == GameState::Menu) {
-        drawMenu(painter);
-    } else if (m_gameState == GameState::Paused) {
-        drawPauseOverlay(painter);
-    } else if (m_gameState == GameState::GameOver) {
-        drawGameOverOverlay(painter);
-    }
+    drawMenu(painter);
+} else if (m_gameState == GameState::Settings) {
+    drawSettingsMenu(painter);
+} else if (m_gameState == GameState::Paused) {
+    drawPauseOverlay(painter);
+} else if (m_gameState == GameState::GameOver) {
+    drawGameOverOverlay(painter);
+}
+
 
 }
 
@@ -722,21 +749,117 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     }
 
     // 主菜单
-    if (m_gameState == GameState::Menu) {
-        if (event->key() == Qt::Key_Return ||
-            event->key() == Qt::Key_Enter ||
-            event->key() == Qt::Key_Space) {
-            startNewGame();
-            return;
-        }
-
-        if (event->key() == Qt::Key_Q) {
-            close();
-            return;
-        }
-
+if (m_gameState == GameState::Menu) {
+    if (event->key() == Qt::Key_Return ||
+        event->key() == Qt::Key_Enter ||
+        event->key() == Qt::Key_Space) {
+        startNewGame();
         return;
     }
+
+    if (event->key() == Qt::Key_S) {
+        m_gameState = GameState::Settings;
+        m_selectedSetting = 0;
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Q) {
+        close();
+        return;
+    }
+
+    return;
+}
+
+if (m_gameState == GameState::Settings) {
+    if (event->key() == Qt::Key_Escape ||
+        event->key() == Qt::Key_M) {
+        m_gameState = GameState::Menu;
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_W) {
+        m_selectedSetting--;
+
+        if (m_selectedSetting < 0) {
+            m_selectedSetting = 3;
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Down || event->key() == Qt::Key_S) {
+        m_selectedSetting++;
+
+        if (m_selectedSetting > 3) {
+            m_selectedSetting = 0;
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Left || event->key() == Qt::Key_A) {
+        if (m_selectedSetting == 0) {
+            m_sfxVolume -= 10;
+            if (m_sfxVolume < 0) {
+                m_sfxVolume = 0;
+            }
+            saveSettings();
+        } else if (m_selectedSetting == 1) {
+            m_musicVolume -= 10;
+            if (m_musicVolume < 0) {
+                m_musicVolume = 0;
+            }
+            saveSettings();
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Right || event->key() == Qt::Key_D) {
+        if (m_selectedSetting == 0) {
+            m_sfxVolume += 10;
+            if (m_sfxVolume > 100) {
+                m_sfxVolume = 100;
+            }
+            saveSettings();
+        } else if (m_selectedSetting == 1) {
+            m_musicVolume += 10;
+            if (m_musicVolume > 100) {
+                m_musicVolume = 100;
+            }
+            saveSettings();
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_F ||
+        event->key() == Qt::Key_Return ||
+        event->key() == Qt::Key_Enter ||
+        event->key() == Qt::Key_Space) {
+        if (m_selectedSetting == 2) {
+            m_fullscreenEnabled = !m_fullscreenEnabled;
+            saveSettings();
+            applyWindowMode();
+            return;
+        }
+
+        if (m_selectedSetting == 3) {
+            m_gameState = GameState::Menu;
+            update();
+            return;
+        }
+    }
+
+    return;
+}
 
     // 游戏中按 ESC 暂停
     if (m_gameState == GameState::Playing &&
@@ -981,33 +1104,84 @@ void MainWindow::drawMenu(QPainter &painter)
 
     painter.setPen(QColor(255, 218, 92));
     painter.setFont(QFont("Arial", 30, QFont::Black));
-    painter.drawText(QRectF(0, 120, m_screenWidth, 60),
+    painter.drawText(QRectF(0, 110, m_screenWidth, 60),
                      Qt::AlignCenter,
                      "The Level Two");
 
     painter.setPen(QColor(230, 230, 230));
     painter.setFont(QFont("Microsoft YaHei", 16, QFont::Bold));
 
-    painter.drawText(QRectF(0, 250, m_screenWidth, 40),
+    painter.drawText(QRectF(0, 240, m_screenWidth, 40),
                      Qt::AlignCenter,
                      "按 Enter / Space 开始游戏");
 
-    painter.drawText(QRectF(0, 305, m_screenWidth, 40),
+    painter.drawText(QRectF(0, 295, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 S 设置");
+
+    painter.drawText(QRectF(0, 350, m_screenWidth, 40),
                      Qt::AlignCenter,
                      "按 Q 退出");
 
     painter.setPen(QColor(255, 218, 92));
-painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
-painter.drawText(QRectF(0, 350, m_screenWidth, 40),
-                 Qt::AlignCenter,
-                 QString("最高分：%1").arg(m_highScore));
+    painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    painter.drawText(QRectF(0, 410, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("最高分：%1").arg(m_highScore));
 
     painter.setPen(QColor(160, 160, 160));
     painter.setFont(QFont("Microsoft YaHei", 11));
-    painter.drawText(QRectF(0, 430, m_screenWidth, 80),
+    painter.drawText(QRectF(0, 470, m_screenWidth, 80),
                      Qt::AlignCenter,
                      "操作：A/D 或方向键移动，Space 射击，ESC 暂停");
 }
+
+void MainWindow::drawSettingsMenu(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 185));
+
+    painter.setPen(QColor(255, 218, 92));
+    painter.setFont(QFont("Arial", 28, QFont::Black));
+    painter.drawText(QRectF(0, 100, m_screenWidth, 60),
+                     Qt::AlignCenter,
+                     "SETTINGS");
+
+    painter.setFont(QFont("Microsoft YaHei", 15, QFont::Bold));
+
+    QString sfxPrefix = (m_selectedSetting == 0) ? "> " : "  ";
+    QString musicPrefix = (m_selectedSetting == 1) ? "> " : "  ";
+    QString fullscreenPrefix = (m_selectedSetting == 2) ? "> " : "  ";
+    QString backPrefix = (m_selectedSetting == 3) ? "> " : "  ";
+
+    painter.setPen(m_selectedSetting == 0 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 230, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1音效音量：%2").arg(sfxPrefix).arg(m_sfxVolume));
+
+    painter.setPen(m_selectedSetting == 1 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 285, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1音乐音量：%2").arg(musicPrefix).arg(m_musicVolume));
+
+    painter.setPen(m_selectedSetting == 2 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 340, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1全屏：%2")
+                         .arg(fullscreenPrefix)
+                         .arg(m_fullscreenEnabled ? "开" : "关"));
+
+    painter.setPen(m_selectedSetting == 3 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 420, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1返回主菜单").arg(backPrefix));
+
+    painter.setPen(QColor(160, 160, 160));
+    painter.setFont(QFont("Microsoft YaHei", 11));
+    painter.drawText(QRectF(0, 520, m_screenWidth, 100),
+                     Qt::AlignCenter,
+                     "↑/↓ 选择，←/→ 调整音量，Enter/F 切换全屏，ESC 返回");
+}
+
 
 void MainWindow::drawPauseOverlay(QPainter &painter)
 {

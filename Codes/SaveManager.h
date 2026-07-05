@@ -27,16 +27,16 @@ public:
         return dir.filePath("save.json");
     }
 
-    static int loadHighScore()
+    static QJsonObject loadObject()
     {
         QFile file(saveFilePath());
 
         if (!file.exists()) {
-            return 0;
+            return QJsonObject();
         }
 
         if (!file.open(QIODevice::ReadOnly)) {
-            return 0;
+            return QJsonObject();
         }
 
         QByteArray data = file.readAll();
@@ -46,27 +46,65 @@ public:
         QJsonDocument doc = QJsonDocument::fromJson(data, &error);
 
         if (error.error != QJsonParseError::NoError || !doc.isObject()) {
-            return 0;
+            return QJsonObject();
         }
 
-        QJsonObject obj = doc.object();
+        return doc.object();
+    }
+
+    static void saveObject(const QJsonObject& obj)
+    {
+        QFile file(saveFilePath());
+
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return;
+        }
+
+        QJsonDocument doc(obj);
+        file.write(doc.toJson(QJsonDocument::Indented));
+        file.close();
+    }
+
+    static int loadHighScore()
+    {
+        QJsonObject obj = loadObject();
         return obj.value("highScore").toInt(0);
     }
 
     static void saveHighScore(int highScore)
     {
-        QJsonObject obj;
+        QJsonObject obj = loadObject();
         obj["highScore"] = highScore;
+        saveObject(obj);
+    }
 
-        QJsonDocument doc(obj);
+    static int loadSfxVolume()
+    {
+        QJsonObject obj = loadObject();
+        return obj.value("sfxVolume").toInt(70);
+    }
 
-        QFile file(saveFilePath());
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            return;
-        }
+    static int loadMusicVolume()
+    {
+        QJsonObject obj = loadObject();
+        return obj.value("musicVolume").toInt(60);
+    }
 
-        file.write(doc.toJson(QJsonDocument::Indented));
-        file.close();
+    static bool loadFullscreen()
+    {
+        QJsonObject obj = loadObject();
+        return obj.value("fullscreen").toBool(false);
+    }
+
+    static void saveSettings(int sfxVolume, int musicVolume, bool fullscreen)
+    {
+        QJsonObject obj = loadObject();
+
+        obj["sfxVolume"] = sfxVolume;
+        obj["musicVolume"] = musicVolume;
+        obj["fullscreen"] = fullscreen;
+
+        saveObject(obj);
     }
 };
 

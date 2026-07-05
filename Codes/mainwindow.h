@@ -43,11 +43,13 @@ private slots:
 
 private:
     enum class GameState {
-        Menu,
-        Playing,
-        Paused,
-        GameOver
-    };
+    Menu,
+    Settings,
+    Playing,
+    Paused,
+    GameOver
+};
+
 
     Ui::MainWindow *ui;
 
@@ -69,6 +71,10 @@ private:
     int m_highScore;
     int m_playerHp;
     int m_currentWave;
+    int m_sfxVolume;
+    int m_musicVolume;
+    bool m_fullscreenEnabled;
+    int m_selectedSetting;
     bool m_isGameOver;
     bool m_bossActive;
     GameState m_gameState;
@@ -84,9 +90,13 @@ private:
 
     void resetGame();
     void updateHighScore();
+    void saveSettings();
+    void applyWindowMode();
+
     void startBossBattle();
     void spawnBossBullets();
     void startNewGame();
+
     void pauseGame();
     void resumeGame();
     void returnToMenu();
@@ -98,6 +108,7 @@ private:
     void drawPlayer(QPainter &painter);
     void drawHud(QPainter &painter);
     void drawMenu(QPainter &painter);
+    void drawSettingsMenu(QPainter &painter);
     void drawPauseOverlay(QPainter &painter);
     void drawGameOverOverlay(QPainter &painter);
 };
