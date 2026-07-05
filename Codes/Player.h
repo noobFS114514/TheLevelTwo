@@ -21,6 +21,13 @@ public:
     return weapon;
 }
 
+void recordWeaponUpgrade() {
+    if (weaponLevel < 3) {
+        ++weaponLevel;
+    }
+}
+
+
 const Weapon& getWeapon() const {
     return weapon;
 }
