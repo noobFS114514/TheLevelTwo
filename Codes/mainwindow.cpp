@@ -138,6 +138,52 @@ void MainWindow::addFloatingText(const QPointF& position,
     m_floatingTexts.append(FloatingText(position, text, color, fontSize));
 }
 
+void MainWindow::damagePlayer(int amount, qreal flashTime)
+{
+    if (m_gameState != GameState::Playing) {
+        return;
+    }
+
+    // 受伤闪烁期间无敌，避免一瞬间扣多次血
+    if (m_hurtFlashTimer > 0.0) {
+        return;
+    }
+
+    m_playerHp -= amount;
+    m_hurtFlashTimer = flashTime;
+
+    QPointF center = m_player.getCollisionBox().center();
+
+    m_effects.append(
+        ParticleEffect::explosion(center, QColor(255, 80, 90), 16)
+    );
+
+    addFloatingText(center,
+                    QString("-%1 HP").arg(amount),
+                    QColor(255, 80, 90),
+                    16);
+
+    if (m_audio) {
+        m_audio->playHit();
+    }
+
+    qDebug() << "Player damaged. HP =" << m_playerHp;
+
+    if (m_playerHp <= 0) {
+        m_isGameOver = true;
+        m_gameState = GameState::GameOver;
+
+        updateHighScore();
+
+        m_gameTimer->stop();
+        m_waveTimer->stop();
+
+        m_moveLeft = false;
+        m_moveRight = false;
+        m_enemyBullets.clear();
+    }
+}
+
 
 void MainWindow::startBossBattle()
 {
@@ -307,8 +353,6 @@ void MainWindow::pauseGame()
 
     m_moveLeft = false;
     m_moveRight = false;
-    m_enemyBullets.clear();
-
 
     update();
 }
@@ -491,10 +535,22 @@ for (auto it = m_floatingTexts.begin(); it != m_floatingTexts.end();) {
 
     // 2. 驱动敌人物理（完全解耦，直接调用归位接口）
     for (auto it = m_enemies.begin(); it != m_enemies.end();) {
-        it->moveDown(deltaTime);
-        if (it->getPosition().y() > m_screenHeight) it = m_enemies.erase(it); // 越界清理
-        else ++it;
+    it->moveDown(deltaTime);
+
+    if (it->getPosition().y() > m_screenHeight) {
+        it = m_enemies.erase(it);
+
+        // 敌人漏掉，玩家扣血
+        damagePlayer(1, 0.25);
+
+        if (m_gameState != GameState::Playing) {
+            update();
+            return;
+        }
+    } else {
+        ++it;
     }
+}
 
     for (auto it = m_bosses.begin(); it != m_bosses.end();) {
     it->update(deltaTime, m_screenWidth);
@@ -502,11 +558,17 @@ for (auto it = m_floatingTexts.begin(); it != m_floatingTexts.end();) {
 if (it->getPosition().y() > m_screenHeight) {
     it = m_bosses.erase(it);
     m_bossActive = false;
+    m_enemyBullets.clear();
 
-    m_currentLevel++;
-    m_wavesClearedInLevel = 0;
-    m_currentWave++;
+    // Boss 漏掉，玩家扣血，但不进入下一关
+    damagePlayer(1, 0.35);
 
+    if (m_gameState != GameState::Playing) {
+        update();
+        return;
+    }
+
+    // 重新准备 Boss 战
     m_waitingForNextWave = true;
     m_nextWaveDelayTimer = 1.5;
 } else {
@@ -821,133 +883,50 @@ for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
     }
 }
 
-    // 玩家 VS 敌人 [cite: 6]
-    QRectF playerBox = m_player.getCollisionBox();
+    // 玩家 VS 敌人
+QRectF playerBox = m_player.getCollisionBox();
 QRectF playerHitbox = playerBox;
 
-    for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
-        if (enemyIt->getHitbox().intersects(playerBox)) {
-    m_hurtFlashTimer = 0.18;
-
-    m_effects.append(
-        ParticleEffect::explosion(enemyIt->getHitbox().center(), QColor(255, 80, 80), 14)
-    );
-
-    enemyIt = m_enemies.erase(enemyIt);
-    m_playerHp--;
-
-    addFloatingText(m_player.getHitbox().center(),
-                "-1 HP",
-                QColor(255, 80, 90),
-                16);
-
-if (m_audio) {
-    m_audio->playHit();
-}
-
-
-   if (m_playerHp <= 0) {
-    m_isGameOver = true;
-    m_gameState = GameState::GameOver;
-
-    updateHighScore();
-
-    m_gameTimer->stop();
-    m_waveTimer->stop();
-
-    m_moveLeft = false;
-    m_moveRight = false;
-    m_enemyBullets.clear();
-
-   }
-
-}
-else { ++enemyIt; }
-    }
-
-    // 玩家 VS Boss
-for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end(); ++bossIt) {
-    if (bossIt->getHitbox().intersects(playerBox) && m_hurtFlashTimer <= 0.0) {
-        m_hurtFlashTimer = 0.35;
-
+for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end();) {
+    if (enemyIt->getHitbox().intersects(playerBox)) {
         m_effects.append(
-            ParticleEffect::explosion(m_player.getHitbox().center(),
+            ParticleEffect::explosion(enemyIt->getHitbox().center(),
                                       QColor(255, 80, 80),
-                                      18)
+                                      14)
         );
 
-        m_playerHp--;
+        enemyIt = m_enemies.erase(enemyIt);
 
-        addFloatingText(playerHitbox.center(),
-                "-1 HP",
-                QColor(255, 80, 90),
-                16);
+        damagePlayer(1, 0.25);
 
-        if (m_audio) {
-            m_audio->playHit();
+        if (m_gameState != GameState::Playing) {
+            break;
         }
+    } else {
+        ++enemyIt;
+    }
+}
 
-        if (m_playerHp <= 0) {
-            m_isGameOver = true;
-            m_gameState = GameState::GameOver;
+// 玩家 VS Boss
+for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end(); ++bossIt) {
+    if (bossIt->getHitbox().intersects(playerBox)) {
+        damagePlayer(1, 0.35);
 
-            updateHighScore();
-
-            m_gameTimer->stop();
-            m_waveTimer->stop();
-
-            m_moveLeft = false;
-            m_moveRight = false;
-            m_enemyBullets.clear();
-
+        if (m_gameState != GameState::Playing) {
+            break;
         }
     }
 }
 
-  for (auto bulletIt = m_enemyBullets.begin(); bulletIt != m_enemyBullets.end();) {
+// Boss 子弹 VS 玩家
+for (auto bulletIt = m_enemyBullets.begin(); bulletIt != m_enemyBullets.end();) {
     if (bulletIt->getHitbox().intersects(playerHitbox)) {
         bulletIt = m_enemyBullets.erase(bulletIt);
 
-        if (m_hurtFlashTimer <= 0.0) {
-            m_hurtFlashTimer = 0.25;
+        damagePlayer(1, 0.25);
 
-            m_effects.append(
-                ParticleEffect::explosion(playerHitbox.center(),
-                                          QColor(255, 80, 90),
-                                          16)
-            );
-
-            m_playerHp--;
-
-            addFloatingText(playerHitbox.center(),
-                "-1 HP",
-                QColor(255, 80, 90),
-                16);
-
-if (m_audio) {
-    m_audio->playHit();
-}
-
-
-
-            qDebug() << "Player hit by boss bullet. HP =" << m_playerHp;
-
-            if (m_playerHp <= 0) {
-                m_isGameOver = true;
-                m_gameState = GameState::GameOver;
-
-                updateHighScore();
-
-                m_gameTimer->stop();
-                m_waveTimer->stop();
-
-                m_moveLeft = false;
-                m_moveRight = false;
-                m_enemyBullets.clear();
-
-
-                break;
-            }
+        if (m_gameState != GameState::Playing) {
+            break;
         }
     } else {
         ++bulletIt;
@@ -1258,6 +1237,34 @@ if (m_gameState == GameState::Settings) {
         return;
     }
 
+    if (event->key() == Qt::Key_1) {
+    m_player.setWeaponType(WeaponType::Gun);
+    addFloatingText(m_player.getHitbox().center(),
+                    "Gun",
+                    QColor(255, 218, 92),
+                    15);
+    return;
+}
+
+if (event->key() == Qt::Key_2) {
+    m_player.setWeaponType(WeaponType::GoldenCudgel);
+    addFloatingText(m_player.getHitbox().center(),
+                    "Golden Cudgel",
+                    QColor(255, 218, 92),
+                    15);
+    return;
+}
+
+if (event->key() == Qt::Key_3) {
+    m_player.setWeaponType(WeaponType::EmbroideryNeedle);
+    addFloatingText(m_player.getHitbox().center(),
+                    "Embroidery Needle",
+                    QColor(255, 218, 92),
+                    15);
+    return;
+}
+
+
     if (event->key() == Qt::Key_Right || event->key() == Qt::Key_D) {
         m_moveRight = true;
         return;
@@ -1508,7 +1515,24 @@ void MainWindow::drawHud(QPainter &painter)
     painter.setFont(QFont("Arial", 14, QFont::Black));
     painter.drawText(24, 39, QString("Score %1").arg(m_score));
     painter.drawText(142, 39, QString("Lv %1").arg(m_currentLevel));
-    painter.drawText(205, 39, QString("Weapon %1").arg(m_player.getWeaponLevel()));
+    QString weaponName = "Gun";
+
+switch (m_player.getWeapon().getType()) {
+case WeaponType::Gun:
+    weaponName = "Gun";
+    break;
+case WeaponType::GoldenCudgel:
+    weaponName = "Cudgel";
+    break;
+case WeaponType::EmbroideryNeedle:
+    weaponName = "Needle";
+    break;
+}
+
+painter.drawText(185, 39,
+                 QString("%1 Lv%2")
+                     .arg(weaponName)
+                     .arg(m_player.getWeaponLevel()));
 
     QString hpText = "HP ";
     for (int i = 0; i < m_playerHp; ++i) {
@@ -1521,6 +1545,44 @@ void MainWindow::drawHud(QPainter &painter)
 
 }
 
+
+void MainWindow::drawControlsHelp(QPainter &painter, int topY)
+{
+    QRectF panel(45, topY, m_screenWidth - 90, 145);
+
+    painter.setPen(QPen(QColor(255, 218, 92, 120), 2));
+    painter.setBrush(QColor(30, 30, 35, 165));
+    painter.drawRoundedRect(panel, 12, 12);
+
+    painter.setPen(QColor(255, 218, 92));
+    painter.setFont(QFont("Microsoft YaHei", 12, QFont::Bold));
+    painter.drawText(QRectF(45, topY + 10, m_screenWidth - 90, 24),
+                     Qt::AlignCenter,
+                     "操作说明");
+
+    painter.setPen(QColor(230, 230, 230));
+    painter.setFont(QFont("Microsoft YaHei", 10));
+
+    painter.drawText(QRectF(70, topY + 42, m_screenWidth - 140, 22),
+                     Qt::AlignLeft,
+                     "A / D 或 ← / → ：移动");
+
+    painter.drawText(QRectF(70, topY + 64, m_screenWidth - 140, 22),
+                     Qt::AlignLeft,
+                     "Space：射击");
+
+    painter.drawText(QRectF(70, topY + 86, m_screenWidth - 140, 22),
+                     Qt::AlignLeft,
+                     "Esc：暂停 / 返回");
+
+    painter.drawText(QRectF(70, topY + 108, m_screenWidth - 140, 22),
+                     Qt::AlignLeft,
+                     "1 / 2 / 3：切换武器");
+
+    painter.drawText(QRectF(70, topY + 128, m_screenWidth - 140, 22),
+                     Qt::AlignLeft,
+                     "漏掉敌人会扣血，打败 Boss 进入下一关");
+}
 
 void MainWindow::drawMenu(QPainter &painter)
 {
@@ -1559,12 +1621,8 @@ void MainWindow::drawMenu(QPainter &painter)
                      Qt::AlignCenter,
                      QString("最高分：%1").arg(m_highScore));
 
-    painter.setPen(QColor(160, 160, 160));
-    painter.setFont(QFont("Microsoft YaHei", 11));
-    painter.drawText(QRectF(0, 470, m_screenWidth, 80),
-                     Qt::AlignCenter,
-                     "操作：A/D 或方向键移动，Space 射击，ESC 暂停，鼠标可点击菜单"
-);
+    drawControlsHelp(painter, 470);
+
 }
 
 void MainWindow::drawSettingsMenu(QPainter &painter)
@@ -1650,6 +1708,8 @@ painter.drawRoundedRect(QRectF(70, 410, m_screenWidth - 140, 40), 10, 10);
     painter.drawText(QRectF(0, 410, m_screenWidth, 40),
                      Qt::AlignCenter,
                      "按 M 返回主菜单");
+    drawControlsHelp(painter, 480);
+
 }
 
 void MainWindow::drawGameOverOverlay(QPainter &painter)

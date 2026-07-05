@@ -4,6 +4,8 @@
 #include <QPointF>
 #include <QRandomGenerator>
 #include <QtMath>
+#include <memory>
+
 
 // ============================================================================
 // 武器类型枚举
@@ -85,6 +87,11 @@ public:
     }
 
     virtual ~Weapon() noexcept = default;
+
+    virtual std::unique_ptr<Weapon> clone() const {
+    return std::make_unique<Weapon>(*this);
+}
+
 
     // ========================================================================
     // 升级接口（由宝箱系统 Chest/PowerUp 调用）
@@ -169,7 +176,7 @@ public:
         for (int i = 0; i < m_bulletCount; ++i) {
             Bullet bullet;
             bullet.setPosition(QPointF(startX + i * spacing, origin.y()));
-            bullet.setSpeed(m_bulletSpeed, &bullet);
+            bullet.setSpeed(m_bulletSpeed);
 
             // ---- 暴击独立判定 ----
             int  finalDmg = m_damage;
@@ -213,6 +220,10 @@ public:
         m_critRate       = 0.05;
         m_critMultiplier = 2.0;
     }
+
+    std::unique_ptr<Weapon> clone() const override {
+    return std::make_unique<Gun>(*this);
+}
 
     // 火力全开：在 burstCooldown 间隔内连续发射 count 发
     // 调用时机：大招计时器触发 → 连续多次调用 fireBurst()
@@ -258,12 +269,17 @@ public:
         m_critMultiplier = 2.0;
     }
 
+    std::unique_ptr<Weapon> clone() const override {
+    return std::make_unique<GoldenCudgel>(*this);
+}
+
+
     // 金箍棒的 fire()：发射单个锚点子弹
     // 外部需要配合碰撞检测：子弹命中敌人后停止移动，由计时器驱动范围伤害
     void fire(const QPointF& origin, QList<Bullet>& bullets) override {
         Bullet bullet;
         bullet.setPosition(origin);
-        bullet.setSpeed(m_bulletSpeed, &bullet);
+        bullet.setSpeed(m_bulletSpeed);
         bullet.setDamage(m_damage);
         bullet.setPierceCount(999);     // 不会被消耗（由 duration 控制消失）
         bullets.append(bullet);
@@ -311,11 +327,16 @@ public:
         m_critMultiplier = 2.0;
     }
 
+    std::unique_ptr<Weapon> clone() const override {
+    return std::make_unique<EmbroideryNeedle>(*this);
+}
+
+
     // 绣花针的 fire()：单发主针
     void fire(const QPointF& origin, QList<Bullet>& bullets) override {
         Bullet bullet;
         bullet.setPosition(origin);
-        bullet.setSpeed(m_bulletSpeed, &bullet);
+        bullet.setSpeed(m_bulletSpeed);
 
         int  finalDmg = m_damage;
         bool crit = (QRandomGenerator::global()->bounded(100)
@@ -373,7 +394,7 @@ public:
             // 注意：当前 Bullet::updateMovement() 仅支持向上移动
             //       后续需扩展 Bullet 子类（如 SplitBullet）以支持任意方向飞行
             //       此处暂存方向和速率，供后续扩展使用
-            needle.setSpeed(splitSpeed, &needle);
+            needle.setSpeed(splitSpeed);
 
             // Step 1 & 5: 伤害减半，分裂次数-1
             needle.setDamage(baseDamage / 2);

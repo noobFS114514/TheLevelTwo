@@ -2,23 +2,57 @@
 #include "GameObject.h"
 #include "Weapon.h"
 #include "Enemy.h"
+#include <memory>
 
 class Player : public GameObject {
 protected:
-    Weapon weapon;
+    std::unique_ptr<Weapon> weapon;
     int weaponLevel = 1;
     int health = 3;
     qreal boundaryLeft = 0.0;
     qreal boundaryRight = 600.0;
 
 public:
-    Player() noexcept {
-        speed = 300.0;
-        hitbox = QRectF(0, 0, 112.0, 72.0);
+    Player() {
+    speed = 300.0;
+    hitbox = QRectF(0, 0, 112.0, 72.0);
+    weapon = std::make_unique<Gun>();
+}
+
+Player(const Player& other)
+    : GameObject(other),
+      weapon(other.weapon ? other.weapon->clone() : nullptr),
+      weaponLevel(other.weaponLevel),
+      health(other.health),
+      boundaryLeft(other.boundaryLeft),
+      boundaryRight(other.boundaryRight)
+{
+}
+
+Player& operator=(const Player& other)
+{
+    if (this == &other) {
+        return *this;
     }
 
-    Weapon& getWeapon() {
-    return weapon;
+    position = other.position;
+    speed = other.speed;
+    hitbox = other.hitbox;
+
+    weapon = other.weapon ? other.weapon->clone() : nullptr;
+    weaponLevel = other.weaponLevel;
+    health = other.health;
+    boundaryLeft = other.boundaryLeft;
+    boundaryRight = other.boundaryRight;
+
+    return *this;
+}
+
+Player(Player&& other) noexcept = default;
+Player& operator=(Player&& other) noexcept = default;
+
+Weapon& getWeapon() {
+    return *weapon;
 }
 
 void recordWeaponUpgrade() {
@@ -27,9 +61,26 @@ void recordWeaponUpgrade() {
     }
 }
 
+void setWeaponType(WeaponType type)
+{
+    switch (type) {
+    case WeaponType::Gun:
+        weapon = std::make_unique<Gun>();
+        break;
+    case WeaponType::GoldenCudgel:
+        weapon = std::make_unique<GoldenCudgel>();
+        break;
+    case WeaponType::EmbroideryNeedle:
+        weapon = std::make_unique<EmbroideryNeedle>();
+        break;
+    }
+
+    weaponLevel = 1;
+}
+
 
 const Weapon& getWeapon() const {
-    return weapon;
+    return *weapon;
 }
 
 int getWeaponLevel() const {
@@ -42,14 +93,18 @@ bool increaseWeaponLevel() {
     }
 
     ++weaponLevel;
-    weapon.upgradeBulletCount(1);
-    weapon.upgradeAttackSpeed(0.15);
+
+    if (weapon) {
+        weapon->upgradeBulletCount(1);
+        weapon->upgradeAttackSpeed(0.15);
+    }
 
     return true;
 }
 
+
 qreal getFireCooldown() const {
-    return weapon.getAttackCooldown();
+    return weapon ? weapon->getAttackCooldown() : 0.25;
 }
 
 QRectF getCollisionBox() const

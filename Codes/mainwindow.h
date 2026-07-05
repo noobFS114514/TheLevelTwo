@@ -112,6 +112,7 @@ private:
                      const QColor& color,
                      int fontSize = 16);
 
+    void damagePlayer(int amount = 1, qreal flashTime = 0.25);
 
     void startBossBattle();
     void spawnBossBullets();
@@ -131,6 +132,8 @@ private:
     void drawSettingsMenu(QPainter &painter);
     void drawPauseOverlay(QPainter &painter);
     void drawGameOverOverlay(QPainter &painter);
+    void drawControlsHelp(QPainter &painter, int topY);
+
 };
 
 #endif // MAINWINDOW_H
