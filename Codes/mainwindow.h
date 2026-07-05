@@ -12,6 +12,8 @@
 #include "PowerUp.h"
 #include "ParticleEffect.h"
 #include "Chest.h"
+#include "SaveManager.h"
+
 
 class QPainter;
 class QPaintEvent;
@@ -61,6 +63,7 @@ private:
     QList<ParticleEffect> m_effects;
 
     int m_score;
+    int m_highScore;
     int m_playerHp;
     int m_currentWave;
     bool m_isGameOver;
@@ -75,6 +78,7 @@ private:
     const int m_screenHeight = 800;
 
     void resetGame();
+    void updateHighScore();
     void startNewGame();
     void pauseGame();
     void resumeGame();

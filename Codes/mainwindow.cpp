@@ -18,6 +18,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_gameTimer, &QTimer::timeout, this, &MainWindow::gameLoop);
     connect(m_waveTimer, &QTimer::timeout, this, &MainWindow::spawnWave);
 
+    m_highScore = SaveManager::loadHighScore();
+
     resetGame();
     m_gameState = GameState::Menu;
     m_gameTimer->stop();
@@ -56,6 +58,16 @@ void MainWindow::resetGame() {
 
     m_gameTimer->stop();
     m_waveTimer->stop();
+}
+
+void MainWindow::updateHighScore()
+{
+    if (m_score > m_highScore) {
+        m_highScore = m_score;
+        SaveManager::saveHighScore(m_highScore);
+
+        qDebug() << "New high score saved:" << m_highScore;
+    }
 }
 
 void MainWindow::startNewGame()
@@ -359,16 +371,18 @@ for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
     enemyIt = m_enemies.erase(enemyIt);
     m_playerHp--;
 
-    if (m_playerHp <= 0) {
+   if (m_playerHp <= 0) {
     m_isGameOver = true;
     m_gameState = GameState::GameOver;
+
+    updateHighScore();
 
     m_gameTimer->stop();
     m_waveTimer->stop();
 
     m_moveLeft = false;
     m_moveRight = false;
-}
+   }
 
 }
 else { ++enemyIt; }
@@ -738,9 +752,15 @@ void MainWindow::drawMenu(QPainter &painter)
                      Qt::AlignCenter,
                      "按 Q 退出");
 
+    painter.setPen(QColor(255, 218, 92));
+painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+painter.drawText(QRectF(0, 350, m_screenWidth, 40),
+                 Qt::AlignCenter,
+                 QString("最高分：%1").arg(m_highScore));
+
     painter.setPen(QColor(160, 160, 160));
     painter.setFont(QFont("Microsoft YaHei", 11));
-    painter.drawText(QRectF(0, 390, m_screenWidth, 80),
+    painter.drawText(QRectF(0, 430, m_screenWidth, 80),
                      Qt::AlignCenter,
                      "操作：A/D 或方向键移动，Space 射击，ESC 暂停");
 }
@@ -785,12 +805,19 @@ void MainWindow::drawGameOverOverlay(QPainter &painter)
                      Qt::AlignCenter,
                      QString("最终分数：%1").arg(m_score));
 
-    painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
-    painter.drawText(QRectF(0, 360, m_screenWidth, 40),
-                     Qt::AlignCenter,
-                     "按 R / Enter 再来一局");
+    painter.setPen(QColor(255, 218, 92));
+painter.drawText(QRectF(0, 315, m_screenWidth, 45),
+                 Qt::AlignCenter,
+                 QString("最高分：%1").arg(m_highScore));
 
-    painter.drawText(QRectF(0, 410, m_screenWidth, 40),
-                     Qt::AlignCenter,
-                     "按 M 返回主菜单");
+    painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    painter.setPen(QColor(255, 255, 255));
+painter.drawText(QRectF(0, 390, m_screenWidth, 40),
+                 Qt::AlignCenter,
+                 "按 R / Enter 再来一局");
+
+painter.drawText(QRectF(0, 440, m_screenWidth, 40),
+                 Qt::AlignCenter,
+                 "按 M 返回主菜单");
+
 }

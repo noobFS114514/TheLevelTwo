@@ -24,6 +24,8 @@ qt_add_executable(TheLevelTwo
     Codes/PowerUp.h
     Codes/Weapon.h
     Codes/Chest.h
+    Codes/SaveManager.h
+
 )
 
 target_link_libraries(TheLevelTwo
