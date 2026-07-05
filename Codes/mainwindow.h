@@ -13,7 +13,8 @@
 #include "ParticleEffect.h"
 #include "Chest.h"
 #include "SaveManager.h"
-
+#include "BossEnemy.h"
+#include "EnemyBullet.h"
 
 class QPainter;
 class QPaintEvent;
@@ -57,7 +58,9 @@ private:
 
     Player m_player;
     QList<Enemy> m_enemies;
+    QList<BossEnemy> m_bosses;
     QList<Bullet> m_bullets;
+    QList<EnemyBullet> m_enemyBullets;
     QList<PowerUp> m_powerUps;
     QList<Chest> m_chests;
     QList<ParticleEffect> m_effects;
@@ -67,11 +70,13 @@ private:
     int m_playerHp;
     int m_currentWave;
     bool m_isGameOver;
+    bool m_bossActive;
     GameState m_gameState;
     bool m_moveLeft;
     bool m_moveRight;
     qreal m_shootCooldown;
     qreal m_timeSinceLastShot;
+    qreal m_bossShootTimer;
     qreal m_hurtFlashTimer;
 
     const int m_screenWidth = 450;
@@ -79,6 +84,8 @@ private:
 
     void resetGame();
     void updateHighScore();
+    void startBossBattle();
+    void spawnBossBullets();
     void startNewGame();
     void pauseGame();
     void resumeGame();

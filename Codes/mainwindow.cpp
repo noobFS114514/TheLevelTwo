@@ -38,13 +38,17 @@ void MainWindow::resetGame() {
     m_playerHp = 3;
     m_currentWave = 1;
     m_isGameOver = false;
+    m_bossActive = false;
     m_moveLeft = false;
     m_moveRight = false;
     m_shootCooldown = 0.25;
     m_timeSinceLastShot = m_player.getFireCooldown();
+    m_bossShootTimer = 0.0;
 
     m_enemies.clear();
+    m_bosses.clear();
     m_bullets.clear();
+    m_enemyBullets.clear();
     m_powerUps.clear();
     m_effects.clear();
     m_chests.clear();
@@ -69,6 +73,57 @@ void MainWindow::updateHighScore()
         qDebug() << "New high score saved:" << m_highScore;
     }
 }
+
+void MainWindow::startBossBattle()
+{
+    m_bossActive = true;
+    m_bossShootTimer = 0.0;
+
+    m_waveTimer->stop();
+
+    m_enemies.clear();
+    m_chests.clear();
+
+    m_bosses.append(BossEnemy(m_currentWave, m_screenWidth));
+
+    m_effects.append(
+        ParticleEffect::ring(QPointF(m_screenWidth / 2.0, 120.0),
+                             QColor(255, 80, 90),
+                             36)
+    );
+
+    qDebug() << "Boss battle started at wave" << m_currentWave;
+}
+
+void MainWindow::spawnBossBullets()
+{
+    if (m_bosses.isEmpty()) {
+        return;
+    }
+
+    QRectF bossBox = m_bosses.first().getHitbox();
+    QPointF origin(bossBox.center().x(), bossBox.bottom() - 4.0);
+
+    const int bulletCount = 7;
+    const qreal startAngle = 55.0;
+    const qreal endAngle = 125.0;
+    const qreal step = (endAngle - startAngle) / (bulletCount - 1);
+
+    for (int i = 0; i < bulletCount; ++i) {
+        qreal angleDegree = startAngle + step * i;
+        qreal angleRad = qDegreesToRadians(angleDegree);
+
+        QPointF direction(qCos(angleRad), qSin(angleRad));
+        m_enemyBullets.append(EnemyBullet(origin, direction, 230.0));
+    }
+
+    m_effects.append(
+        ParticleEffect::ring(origin, QColor(255, 90, 110), 18)
+    );
+
+    qDebug() << "Boss fired" << bulletCount << "bullets";
+}
+
 
 void MainWindow::startNewGame()
 {
@@ -135,6 +190,13 @@ void MainWindow::returnToMenu()
 
 void MainWindow::spawnWave() {
     if (m_gameState != GameState::Playing) return;
+    if (m_bossActive) return;
+
+    if (m_currentWave % 3 == 0) {
+        startBossBattle();
+        m_currentWave++;
+        return;
+    }
     const int enemyWidth = 118;
     int enemyCount = QRandomGenerator::global()->bounded(3, 6); // 随机3~5个 [cite: 5]
     for (int i = 0; i < enemyCount; ++i) {
@@ -206,12 +268,45 @@ for (auto it = m_effects.begin(); it != m_effects.end();) {
         else ++it;
     }
 
+    for (auto it = m_enemyBullets.begin(); it != m_enemyBullets.end();) {
+    it->update(deltaTime);
+
+    if (it->isOutOfBounds(m_screenWidth, m_screenHeight)) {
+        it = m_enemyBullets.erase(it);
+    } else {
+        ++it;
+    }
+}
+
+
     // 2. 驱动敌人物理（完全解耦，直接调用归位接口）
     for (auto it = m_enemies.begin(); it != m_enemies.end();) {
         it->moveDown(deltaTime);
         if (it->getPosition().y() > m_screenHeight) it = m_enemies.erase(it); // 越界清理
         else ++it;
     }
+
+    for (auto it = m_bosses.begin(); it != m_bosses.end();) {
+    it->update(deltaTime, m_screenWidth);
+
+    if (it->getPosition().y() > m_screenHeight) {
+        it = m_bosses.erase(it);
+        m_bossActive = false;
+        m_waveTimer->start(2500);
+    } else {
+        ++it;
+    }
+}
+
+if (m_bossActive && !m_bosses.isEmpty()) {
+    m_bossShootTimer += deltaTime;
+
+    if (m_bossShootTimer >= 1.4) {
+        m_bossShootTimer = 0.0;
+        spawnBossBullets();
+    }
+}
+
 
     for (auto it = m_powerUps.begin(); it != m_powerUps.end();) {
     it->moveDown(deltaTime);
@@ -357,6 +452,74 @@ for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
     }
 }
 
+// 子弹 VS Boss
+for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
+    bool bossDestroyed = false;
+
+    for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end();) {
+        if (!bossIt->getHitbox().intersects(bulletIt->getHitbox())) {
+            ++bulletIt;
+            continue;
+        }
+
+        QPointF hitCenter = bulletIt->getHitbox().center();
+
+        bossIt->takeDamage(bulletIt->getDamage());
+
+        if (bulletIt->getCrit()) {
+            m_effects.append(
+                ParticleEffect::explosion(hitCenter, QColor(255, 80, 80), 12)
+            );
+        }
+
+        bool shouldRemoveBullet = bulletIt->consumePierce();
+
+        if (bossIt->isDead()) {
+            QPointF dropCenter = bossIt->getHitbox().center();
+
+            m_score += bossIt->getScoreValue();
+
+            m_effects.append(
+                ParticleEffect::explosion(dropCenter, QColor(255, 80, 90), 48)
+            );
+
+            for (int i = 0; i < 5; ++i) {
+                QPointF dropPos(
+                    dropCenter.x() - 70.0 + i * 35.0,
+                    dropCenter.y()
+                );
+
+                PowerUpType type = (i % 2 == 0)
+                    ? PowerUpType::Heal
+                    : PowerUpType::WeaponUpgrade;
+
+                m_powerUps.append(PowerUp(dropPos, type));
+            }
+
+            bossIt = m_bosses.erase(bossIt);
+            bossDestroyed = true;
+            m_bossActive = false;
+
+            m_waveTimer->start(2500);
+
+            qDebug() << "Boss defeated. Score =" << m_score;
+        }
+
+        if (shouldRemoveBullet) {
+            bulletIt = m_bullets.erase(bulletIt);
+        } else {
+            ++bulletIt;
+        }
+
+        if (bossDestroyed) {
+            break;
+        }
+    }
+
+    if (!bossDestroyed) {
+        ++bossIt;
+    }
+}
 
     // 玩家 VS 敌人 [cite: 6]
     QRectF playerBox = m_player.getHitbox();
@@ -388,7 +551,72 @@ for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
 else { ++enemyIt; }
     }
 
-    QRectF playerHitbox = m_player.getHitbox();
+    // 玩家 VS Boss
+for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end(); ++bossIt) {
+    if (bossIt->getHitbox().intersects(playerBox) && m_hurtFlashTimer <= 0.0) {
+        m_hurtFlashTimer = 0.35;
+
+        m_effects.append(
+            ParticleEffect::explosion(m_player.getHitbox().center(),
+                                      QColor(255, 80, 80),
+                                      18)
+        );
+
+        m_playerHp--;
+
+        if (m_playerHp <= 0) {
+            m_isGameOver = true;
+            m_gameState = GameState::GameOver;
+
+            updateHighScore();
+
+            m_gameTimer->stop();
+            m_waveTimer->stop();
+
+            m_moveLeft = false;
+            m_moveRight = false;
+        }
+    }
+}
+
+  QRectF playerHitbox = m_player.getHitbox();
+
+  for (auto bulletIt = m_enemyBullets.begin(); bulletIt != m_enemyBullets.end();) {
+    if (bulletIt->getHitbox().intersects(playerHitbox)) {
+        bulletIt = m_enemyBullets.erase(bulletIt);
+
+        if (m_hurtFlashTimer <= 0.0) {
+            m_hurtFlashTimer = 0.25;
+
+            m_effects.append(
+                ParticleEffect::explosion(playerHitbox.center(),
+                                          QColor(255, 80, 90),
+                                          16)
+            );
+
+            m_playerHp--;
+
+            qDebug() << "Player hit by boss bullet. HP =" << m_playerHp;
+
+            if (m_playerHp <= 0) {
+                m_isGameOver = true;
+                m_gameState = GameState::GameOver;
+
+                updateHighScore();
+
+                m_gameTimer->stop();
+                m_waveTimer->stop();
+
+                m_moveLeft = false;
+                m_moveRight = false;
+
+                break;
+            }
+        }
+    } else {
+        ++bulletIt;
+    }
+}
 
 for (auto powerIt = m_powerUps.begin(); powerIt != m_powerUps.end();) {
     if (powerIt->getHitbox().intersects(playerHitbox)) {
@@ -397,14 +625,22 @@ for (auto powerIt = m_powerUps.begin(); powerIt != m_powerUps.end();) {
         );
 
         if (powerIt->getType() == PowerUpType::Heal) {
-            m_playerHp += 1;
+    m_playerHp += 1;
 
-            if (m_playerHp > 5) {
-                m_playerHp = 5;
-            }
+    if (m_playerHp > 5) {
+        m_playerHp = 5;
+    }
 
-            qDebug() << "PowerUp picked: HP +1";
-        }
+    qDebug() << "PowerUp picked: HP +1";
+} else if (powerIt->getType() == PowerUpType::WeaponUpgrade) {
+    if (m_player.increaseWeaponLevel()) {
+        qDebug() << "PowerUp picked: weapon level ="
+                 << m_player.getWeaponLevel();
+    } else {
+        qDebug() << "PowerUp picked: weapon already max";
+    }
+}
+
 
         powerIt = m_powerUps.erase(powerIt);
     } else {
@@ -425,6 +661,10 @@ void MainWindow::paintEvent(QPaintEvent *event) {
         enemy.draw(painter);
     }
 
+    for (auto& boss : m_bosses) {
+    boss.draw(painter);
+}
+
     for (auto& powerUp : m_powerUps) {
         powerUp.draw(painter);
     }
@@ -442,6 +682,10 @@ void MainWindow::paintEvent(QPaintEvent *event) {
         painter.drawRoundedRect(shine, 2.0, 2.0);
         painter.setBrush(QColor(255, 218, 92));
     }
+
+    for (const auto& enemyBullet : m_enemyBullets) {
+    enemyBullet.draw(painter);
+}
 
     for (const auto& effect : m_effects) {
     effect.draw(painter);

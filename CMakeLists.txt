@@ -24,7 +24,10 @@ qt_add_executable(TheLevelTwo
     Codes/PowerUp.h
     Codes/Weapon.h
     Codes/Chest.h
+    Codes/ParticleEffect.h
     Codes/SaveManager.h
+    Codes/BossEnemy.h
+    Codes/EnemyBullet.h
 
 )
 
