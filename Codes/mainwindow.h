@@ -15,10 +15,13 @@
 #include "SaveManager.h"
 #include "BossEnemy.h"
 #include "EnemyBullet.h"
+#include "FloatingText.h"
 
 class QPainter;
 class QPaintEvent;
 class QKeyEvent;
+class QMouseEvent;
+
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -36,6 +39,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
 
 private slots:
     void gameLoop();
@@ -66,6 +70,7 @@ private:
     QList<PowerUp> m_powerUps;
     QList<Chest> m_chests;
     QList<ParticleEffect> m_effects;
+    QList<FloatingText> m_floatingTexts;
 
     int m_score;
     int m_highScore;
@@ -92,6 +97,12 @@ private:
     void updateHighScore();
     void saveSettings();
     void applyWindowMode();
+    void playSfx();
+    void addFloatingText(const QPointF& position,
+                     const QString& text,
+                     const QColor& color,
+                     int fontSize = 16);
+
 
     void startBossBattle();
     void spawnBossBullets();
