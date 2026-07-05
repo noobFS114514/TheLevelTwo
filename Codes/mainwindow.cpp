@@ -19,6 +19,16 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_waveTimer, &QTimer::timeout, this, &MainWindow::spawnWave);
 
     resetGame();
+    m_gameState = GameState::Menu;
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+    update();
+
+}
+
+MainWindow::~MainWindow()
+{
+    delete ui;
 }
 
 void MainWindow::resetGame() {
@@ -44,12 +54,75 @@ void MainWindow::resetGame() {
     m_elapsedTimer.start();
     m_lastFrameTime = 0.0;
 
-    m_gameTimer->start(16);   // 60FPS
-    m_waveTimer->start(2500);  // 稍慢一些，更接近可玩的演示节奏
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+}
+
+void MainWindow::startNewGame()
+{
+    resetGame();
+    m_gameState = GameState::Playing;
+    m_isGameOver = false;
+
+    m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
+
+    m_gameTimer->start(16);
+    m_waveTimer->start(2500);
+
+    setFocus();
+    update();
+}
+
+void MainWindow::pauseGame()
+{
+    if (m_gameState != GameState::Playing) {
+        return;
+    }
+
+    m_gameState = GameState::Paused;
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+
+    m_moveLeft = false;
+    m_moveRight = false;
+
+    update();
+}
+
+void MainWindow::resumeGame()
+{
+    if (m_gameState != GameState::Paused) {
+        return;
+    }
+
+    m_gameState = GameState::Playing;
+
+    m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
+
+    m_gameTimer->start(16);
+    m_waveTimer->start(2500);
+
+    setFocus();
+    update();
+}
+
+void MainWindow::returnToMenu()
+{
+    resetGame();
+    m_gameState = GameState::Menu;
+    m_isGameOver = false;
+
+    m_moveLeft = false;
+    m_moveRight = false;
+
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+
+    update();
 }
 
 void MainWindow::spawnWave() {
-    if (m_isGameOver) return;
+    if (m_gameState != GameState::Playing) return;
     const int enemyWidth = 118;
     int enemyCount = QRandomGenerator::global()->bounded(3, 6); // 随机3~5个 [cite: 5]
     for (int i = 0; i < enemyCount; ++i) {
@@ -81,7 +154,10 @@ void MainWindow::gameLoop() {
     qreal deltaTime = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
 
-    if (m_isGameOver) { update(); return; }
+    if (m_gameState != GameState::Playing) {
+    update();
+    return;
+}
 
     m_timeSinceLastShot += deltaTime;
 
@@ -152,7 +228,7 @@ for (auto it = m_effects.begin(); it != m_effects.end();) {
 }
 
 void MainWindow::checkCollisions() {
-    if (m_isGameOver) return;
+    if (m_gameState != GameState::Playing) return;
 
     // 子弹 VS 宝箱
 for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
@@ -197,10 +273,11 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
 
             m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
 
-            if (!m_isGameOver) {
+            if (m_gameState == GameState::Playing) {
                 m_gameTimer->start(16);
                 m_waveTimer->start(2500);
             }
+
 
             chestIt = m_chests.erase(chestIt);
             chestRemoved = true;
@@ -212,36 +289,62 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
         ++chestIt;
     }
 }
+    
+    // 子弹 VS 敌人：伤害、暴击、穿透全部生效
+for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
+    bool enemyDestroyed = false;
 
-    // 子弹 VS 敌人 [cite: 6]
-    for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
-        bool enemyDestroyed = false;
-        for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end(); ) {
-            if (enemyIt->getHitbox().intersects(bulletIt->getHitbox())) {
-                enemyIt->getHurt(1);
-                bulletIt = m_bullets.erase(bulletIt);
-                if (enemyIt->isDead()) {
-                    m_score += enemyIt->getScoreValue();
-                    m_effects.append(
-                        ParticleEffect::explosion(enemyIt->getHitbox().center(), QColor(255, 218, 92), 18)
-                    );
-
-                    QPointF dropPos = enemyIt->getPosition();
-
-                    int chance = QRandomGenerator::global()->bounded(100);
-                    if (chance < 30) {
-                        m_powerUps.append(PowerUp(dropPos, PowerUpType::Heal));
-                    }
-
-                    enemyIt = m_enemies.erase(enemyIt);
-                    enemyDestroyed = true;
-                    break;
-                }                
-
-            } else { ++bulletIt; }
+    for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end(); ) {
+        if (!enemyIt->getHitbox().intersects(bulletIt->getHitbox())) {
+            ++bulletIt;
+            continue;
         }
-        if (!enemyDestroyed) ++enemyIt;
+
+        QPointF hitCenter = enemyIt->getHitbox().center();
+        QPointF dropPos = enemyIt->getPosition();
+
+        enemyIt->getHurt(bulletIt->getDamage());
+
+        if (bulletIt->getCrit()) {
+            m_effects.append(
+                ParticleEffect::explosion(hitCenter, QColor(255, 80, 80), 10)
+            );
+        }
+
+        bool shouldRemoveBullet = bulletIt->consumePierce();
+
+        if (enemyIt->isDead()) {
+            m_score += enemyIt->getScoreValue();
+
+            m_effects.append(
+                ParticleEffect::explosion(hitCenter, QColor(255, 218, 92), 18)
+            );
+
+            int chance = QRandomGenerator::global()->bounded(100);
+            if (chance < 30) {
+                m_powerUps.append(PowerUp(dropPos, PowerUpType::Heal));
+            }
+
+            enemyIt = m_enemies.erase(enemyIt);
+            enemyDestroyed = true;
+        }
+
+        if (shouldRemoveBullet) {
+            bulletIt = m_bullets.erase(bulletIt);
+        } else {
+            ++bulletIt;
+        }
+
+        if (enemyDestroyed) {
+            break;
+        }
     }
+
+    if (!enemyDestroyed) {
+        ++enemyIt;
+    }
+}
+
 
     // 玩家 VS 敌人 [cite: 6]
     QRectF playerBox = m_player.getHitbox();
@@ -257,9 +360,16 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
     m_playerHp--;
 
     if (m_playerHp <= 0) {
-        m_isGameOver = true;
-        m_waveTimer->stop();
-    }
+    m_isGameOver = true;
+    m_gameState = GameState::GameOver;
+
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+
+    m_moveLeft = false;
+    m_moveRight = false;
+}
+
 }
 else { ++enemyIt; }
     }
@@ -336,22 +446,98 @@ void MainWindow::paintEvent(QPaintEvent *event) {
 }
 
 
-    if (m_isGameOver) {
-        painter.fillRect(rect(), QColor(0, 0, 0, 160));
-        painter.setPen(Qt::white);
-        painter.setFont(QFont("Arial", 22, QFont::Bold));
-        painter.drawText(rect(), Qt::AlignCenter, "GAME OVER\n\nPress R to Restart");
+    if (m_gameState == GameState::Menu) {
+        drawMenu(painter);
+    } else if (m_gameState == GameState::Paused) {
+        drawPauseOverlay(painter);
+    } else if (m_gameState == GameState::GameOver) {
+        drawGameOverOverlay(painter);
     }
+
 }
 
-void MainWindow::keyPressEvent(QKeyEvent *event) {
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
     if (event->isAutoRepeat()) {
         QMainWindow::keyPressEvent(event);
         return;
     }
 
-    if (m_isGameOver && event->key() == Qt::Key_R) {
-        resetGame();
+    // 主菜单
+    if (m_gameState == GameState::Menu) {
+        if (event->key() == Qt::Key_Return ||
+            event->key() == Qt::Key_Enter ||
+            event->key() == Qt::Key_Space) {
+            startNewGame();
+            return;
+        }
+
+        if (event->key() == Qt::Key_Q) {
+            close();
+            return;
+        }
+
+        return;
+    }
+
+    // 游戏中按 ESC 暂停
+    if (m_gameState == GameState::Playing &&
+        event->key() == Qt::Key_Escape) {
+        pauseGame();
+        return;
+    }
+
+    // 暂停菜单
+    if (m_gameState == GameState::Paused) {
+        if (event->key() == Qt::Key_Escape ||
+            event->key() == Qt::Key_Return ||
+            event->key() == Qt::Key_Enter) {
+            resumeGame();
+            return;
+        }
+
+        if (event->key() == Qt::Key_R) {
+            startNewGame();
+            return;
+        }
+
+        if (event->key() == Qt::Key_M) {
+            returnToMenu();
+            return;
+        }
+
+        if (event->key() == Qt::Key_Q) {
+            close();
+            return;
+        }
+
+        return;
+    }
+
+    // Game Over 菜单
+    if (m_gameState == GameState::GameOver) {
+        if (event->key() == Qt::Key_R ||
+            event->key() == Qt::Key_Return ||
+            event->key() == Qt::Key_Enter) {
+            startNewGame();
+            return;
+        }
+
+        if (event->key() == Qt::Key_M) {
+            returnToMenu();
+            return;
+        }
+
+        if (event->key() == Qt::Key_Q) {
+            close();
+            return;
+        }
+
+        return;
+    }
+
+    // 下面只处理 Playing 状态
+    if (m_gameState != GameState::Playing) {
         return;
     }
 
@@ -365,20 +551,20 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
-    // 临时测试武器升级，后续由宝箱触发
-if (event->key() == Qt::Key_U && !m_isGameOver) {
-    if (m_player.increaseWeaponLevel()) {
-        qDebug() << "Weapon upgraded:"
-                 << "level =" << m_player.getWeaponLevel()
-                 << "bullet count =" << m_player.getWeapon().getBulletCount();
-    } else {
-        qDebug() << "Weapon already at max level";
+    // 临时测试武器升级，后续可以删掉
+    if (event->key() == Qt::Key_U) {
+        if (m_player.increaseWeaponLevel()) {
+            qDebug() << "Weapon upgraded:"
+                     << "level =" << m_player.getWeaponLevel()
+                     << "bullet count =" << m_player.getWeapon().getBulletCount();
+        } else {
+            qDebug() << "Weapon already at max level";
+        }
+
+        return;
     }
 
-    return;
-}
-
-    if (event->key() == Qt::Key_Space && !m_isGameOver) {
+    if (event->key() == Qt::Key_Space) {
         shootBullet();
         return;
     }
@@ -386,10 +572,6 @@ if (event->key() == Qt::Key_U && !m_isGameOver) {
     QMainWindow::keyPressEvent(event);
 }
 
-MainWindow::~MainWindow()
-{
-    delete ui;
-}
 
 void MainWindow::keyReleaseEvent(QKeyEvent *event)
 {
@@ -413,6 +595,11 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
 
 void MainWindow::shootBullet()
 {
+
+    if (m_gameState != GameState::Playing) {
+        return;
+    }
+
     const qreal cooldown = m_player.getFireCooldown();
 
     if (m_timeSinceLastShot < cooldown) {
@@ -527,4 +714,83 @@ void MainWindow::drawHud(QPainter &painter)
         hpText += "DEAD";
     }
     painter.drawText(m_screenWidth - 118, 39, hpText);
+}
+
+
+void MainWindow::drawMenu(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 175));
+
+    painter.setPen(QColor(255, 218, 92));
+    painter.setFont(QFont("Arial", 30, QFont::Black));
+    painter.drawText(QRectF(0, 120, m_screenWidth, 60),
+                     Qt::AlignCenter,
+                     "The Level Two");
+
+    painter.setPen(QColor(230, 230, 230));
+    painter.setFont(QFont("Microsoft YaHei", 16, QFont::Bold));
+
+    painter.drawText(QRectF(0, 250, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 Enter / Space 开始游戏");
+
+    painter.drawText(QRectF(0, 305, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 Q 退出");
+
+    painter.setPen(QColor(160, 160, 160));
+    painter.setFont(QFont("Microsoft YaHei", 11));
+    painter.drawText(QRectF(0, 390, m_screenWidth, 80),
+                     Qt::AlignCenter,
+                     "操作：A/D 或方向键移动，Space 射击，ESC 暂停");
+}
+
+void MainWindow::drawPauseOverlay(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 150));
+
+    painter.setPen(QColor(255, 255, 255));
+    painter.setFont(QFont("Arial", 28, QFont::Black));
+    painter.drawText(QRectF(0, 210, m_screenWidth, 60),
+                     Qt::AlignCenter,
+                     "PAUSED");
+
+    painter.setFont(QFont("Microsoft YaHei", 15, QFont::Bold));
+    painter.drawText(QRectF(0, 310, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 ESC / Enter 继续");
+
+    painter.drawText(QRectF(0, 360, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 R 重新开始");
+
+    painter.drawText(QRectF(0, 410, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 M 返回主菜单");
+}
+
+void MainWindow::drawGameOverOverlay(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 175));
+
+    painter.setPen(QColor(255, 90, 90));
+    painter.setFont(QFont("Arial", 30, QFont::Black));
+    painter.drawText(QRectF(0, 170, m_screenWidth, 70),
+                     Qt::AlignCenter,
+                     "GAME OVER");
+
+    painter.setPen(QColor(255, 255, 255));
+    painter.setFont(QFont("Microsoft YaHei", 17, QFont::Bold));
+    painter.drawText(QRectF(0, 270, m_screenWidth, 45),
+                     Qt::AlignCenter,
+                     QString("最终分数：%1").arg(m_score));
+
+    painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    painter.drawText(QRectF(0, 360, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 R / Enter 再来一局");
+
+    painter.drawText(QRectF(0, 410, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 M 返回主菜单");
 }
