@@ -34,7 +34,11 @@ void MainWindow::resetGame() {
     m_enemies.clear();
     m_bullets.clear();
     m_powerUps.clear();
+    m_effects.clear();
+    m_chests.clear();
+    m_hurtFlashTimer = 0.0;
 
+    m_player = Player();
     m_player.spawnPlayer(730.0, 0.0, static_cast<qreal>(m_screenWidth));
 
     m_elapsedTimer.start();
@@ -54,6 +58,21 @@ void MainWindow::spawnWave() {
         qreal enemySpeed = 80.0 + (m_currentWave * 3.0);
         m_enemies.append(Enemy(QPointF(randomX, startY), enemySpeed, m_currentWave));
     }
+    // 随机生成宝箱：第 2 波以后有 35% 概率出现
+if (m_currentWave >= 2 && QRandomGenerator::global()->bounded(100) < 35) {
+    Chest chest;
+
+    qreal chestX = QRandomGenerator::global()->bounded(
+        40,
+        m_screenWidth - 90
+    );
+
+    chest.spawnChest(chestX, -80.0, m_currentWave);
+    m_chests.append(chest);
+
+    qDebug() << "Chest spawned at wave" << m_currentWave;
+}
+
     m_currentWave++;
 }
 
@@ -65,6 +84,24 @@ void MainWindow::gameLoop() {
     if (m_isGameOver) { update(); return; }
 
     m_timeSinceLastShot += deltaTime;
+
+    if (m_hurtFlashTimer > 0.0) {
+    m_hurtFlashTimer -= deltaTime;
+    if (m_hurtFlashTimer < 0.0) {
+        m_hurtFlashTimer = 0.0;
+    }
+}
+
+for (auto it = m_effects.begin(); it != m_effects.end();) {
+    it->update(deltaTime);
+
+    if (it->isFinished()) {
+        it = m_effects.erase(it);
+    } else {
+        ++it;
+    }
+}
+
 
     // A2：根据按键状态持续移动玩家
     if (m_moveLeft) {
@@ -98,6 +135,16 @@ void MainWindow::gameLoop() {
         }
     }
 
+    for (auto it = m_chests.begin(); it != m_chests.end();) {
+    it->moveDown(deltaTime);
+
+    if (it->getPosition().y() > m_screenHeight) {
+        it = m_chests.erase(it);
+    } else {
+        ++it;
+    }
+}
+
 
     // 3. 碰撞仲裁
     checkCollisions();
@@ -106,6 +153,65 @@ void MainWindow::gameLoop() {
 
 void MainWindow::checkCollisions() {
     if (m_isGameOver) return;
+
+    // 子弹 VS 宝箱
+for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
+    bool chestRemoved = false;
+
+    for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end();) {
+        if (!chestIt->getHitbox().intersects(bulletIt->getHitbox())) {
+            ++bulletIt;
+            continue;
+        }
+
+        chestIt->takeDamage(bulletIt->getDamage());
+
+        if (bulletIt->consumePierce()) {
+            bulletIt = m_bullets.erase(bulletIt);
+        } else {
+            ++bulletIt;
+        }
+
+        if (chestIt->isDead()) {
+            qDebug() << "Chest opened at wave" << chestIt->getWave();
+
+            m_gameTimer->stop();
+            m_waveTimer->stop();
+
+            bool upgraded = chestIt->showUpgradeWindow(
+                &m_player.getWeapon(),
+                chestIt->getWave(),
+                this
+            );
+
+            if (upgraded) {
+                m_player.recordWeaponUpgrade();
+
+                qDebug() << "Chest upgrade accepted:"
+                         << "level =" << m_player.getWeaponLevel()
+                         << "damage =" << m_player.getWeapon().getDamage()
+                         << "bullet count =" << m_player.getWeapon().getBulletCount()
+                         << "cooldown =" << m_player.getWeapon().getAttackCooldown()
+                         << "pierce =" << m_player.getWeapon().getPierceCount();
+            }
+
+            m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
+
+            if (!m_isGameOver) {
+                m_gameTimer->start(16);
+                m_waveTimer->start(2500);
+            }
+
+            chestIt = m_chests.erase(chestIt);
+            chestRemoved = true;
+            break;
+        }
+    }
+
+    if (!chestRemoved) {
+        ++chestIt;
+    }
+}
 
     // 子弹 VS 敌人 [cite: 6]
     for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
@@ -116,6 +222,9 @@ void MainWindow::checkCollisions() {
                 bulletIt = m_bullets.erase(bulletIt);
                 if (enemyIt->isDead()) {
                     m_score += enemyIt->getScoreValue();
+                    m_effects.append(
+                        ParticleEffect::explosion(enemyIt->getHitbox().center(), QColor(255, 218, 92), 18)
+                    );
 
                     QPointF dropPos = enemyIt->getPosition();
 
@@ -138,16 +247,31 @@ void MainWindow::checkCollisions() {
     QRectF playerBox = m_player.getHitbox();
     for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
         if (enemyIt->getHitbox().intersects(playerBox)) {
-            enemyIt = m_enemies.erase(enemyIt);
-            m_playerHp--; // 扣血 [cite: 7]
-            if (m_playerHp <= 0) { m_isGameOver = true; m_waveTimer->stop(); }
-        } else { ++enemyIt; }
+    m_hurtFlashTimer = 0.18;
+
+    m_effects.append(
+        ParticleEffect::explosion(enemyIt->getHitbox().center(), QColor(255, 80, 80), 14)
+    );
+
+    enemyIt = m_enemies.erase(enemyIt);
+    m_playerHp--;
+
+    if (m_playerHp <= 0) {
+        m_isGameOver = true;
+        m_waveTimer->stop();
+    }
+}
+else { ++enemyIt; }
     }
 
     QRectF playerHitbox = m_player.getHitbox();
 
 for (auto powerIt = m_powerUps.begin(); powerIt != m_powerUps.end();) {
     if (powerIt->getHitbox().intersects(playerHitbox)) {
+        m_effects.append(
+            ParticleEffect::ring(powerIt->getHitbox().center(), QColor(80, 220, 120), 20)
+        );
+
         if (powerIt->getType() == PowerUpType::Heal) {
             m_playerHp += 1;
 
@@ -181,6 +305,9 @@ void MainWindow::paintEvent(QPaintEvent *event) {
         powerUp.draw(painter);
     }
 
+    for (auto& chest : m_chests) {
+    chest.draw(painter);
+}
 
     painter.setPen(QPen(QColor(86, 61, 22), 2));
     painter.setBrush(QColor(255, 218, 92));
@@ -192,8 +319,22 @@ void MainWindow::paintEvent(QPaintEvent *event) {
         painter.setBrush(QColor(255, 218, 92));
     }
 
+    for (const auto& effect : m_effects) {
+    effect.draw(painter);
+}
+
+
     drawPlayer(painter);
     drawHud(painter);
+
+    if (m_hurtFlashTimer > 0.0) {
+    qreal ratio = m_hurtFlashTimer / 0.18;
+    if (ratio > 1.0) ratio = 1.0;
+    if (ratio < 0.0) ratio = 0.0;
+
+    painter.fillRect(rect(), QColor(255, 0, 0, static_cast<int>(90 * ratio)));
+}
+
 
     if (m_isGameOver) {
         painter.fillRect(rect(), QColor(0, 0, 0, 160));
@@ -226,11 +367,13 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
 
     // 临时测试武器升级，后续由宝箱触发
 if (event->key() == Qt::Key_U && !m_isGameOver) {
-    m_player.increaseWeaponLevel();
-
-    qDebug() << "Weapon upgraded:"
-             << "level =" << m_player.getWeaponLevel()
-             << "bullet count =" << m_player.getWeapon().getBulletCount();
+    if (m_player.increaseWeaponLevel()) {
+        qDebug() << "Weapon upgraded:"
+                 << "level =" << m_player.getWeaponLevel()
+                 << "bullet count =" << m_player.getWeapon().getBulletCount();
+    } else {
+        qDebug() << "Weapon already at max level";
+    }
 
     return;
 }
@@ -374,7 +517,7 @@ void MainWindow::drawHud(QPainter &painter)
     painter.setPen(QColor(255, 255, 255));
     painter.setFont(QFont("Arial", 14, QFont::Black));
     painter.drawText(28, 39, QString("Score %1").arg(m_score));
-    painter.drawText(178, 39, "Level 1");
+    painter.drawText(178, 39, QString("Weapon Lv: %1").arg(m_player.getWeaponLevel()));
 
     QString hpText = "HP ";
     for (int i = 0; i < m_playerHp; ++i) {

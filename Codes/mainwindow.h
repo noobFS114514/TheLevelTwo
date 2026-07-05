@@ -9,6 +9,9 @@
 #include "Enemy.h"
 #include "Bullet.h"
 #include "PowerUp.h"
+#include "ParticleEffect.h"
+#include "Chest.h"
+
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -46,6 +49,9 @@ private:
     QList<Enemy> m_enemies;
     QList<Bullet> m_bullets; // 用于接收来自 Player 发射的子弹
     QList<PowerUp> m_powerUps;
+    QList<Chest> m_chests;
+    QList<ParticleEffect> m_effects;
+    qreal m_hurtFlashTimer;
 
     // A3 计分与状态变量
     int m_score;
