@@ -13,6 +13,7 @@
 #include <QVector>
 #include <QFont>
 #include <QFrame>
+#include <QKeyEvent>
 
 // ============================================================================
 // UpgradeOption — 单个升级选项的描述
@@ -137,6 +138,12 @@ public:
             auto* btn = new QPushButton(btnText);
             btn->setMinimumHeight(64);
             btn->setCursor(Qt::PointingHandCursor);
+
+            // 防止玩家刚按 Space 射击后，升级窗口默认选中第一个按钮
+            btn->setAutoDefault(false);
+            btn->setDefault(false);
+            btn->setFocusPolicy(Qt::NoFocus);
+
             btn->setStyleSheet(
                 "QPushButton {"
                 "  background-color: #2d2d3f;"
@@ -182,7 +189,21 @@ public:
         mainLayout->addWidget(hintLabel);
     }
 
+protected:
+    void keyPressEvent(QKeyEvent* event) override
+    {
+        if (event->key() == Qt::Key_Space ||
+            event->key() == Qt::Key_Return ||
+            event->key() == Qt::Key_Enter) {
+            event->ignore();
+            return;
+        }
+
+        QDialog::keyPressEvent(event);
+    }
+    
 private:
+
     Weapon* m_weapon;
     QVector<UpgradeOption> m_options;
 

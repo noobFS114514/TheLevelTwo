@@ -4,6 +4,11 @@
 #include <QPainter>
 #include <QRandomGenerator>
 #include <QDebug>
+#include <QApplication>
+#include <QtMath>
+#include <QMouseEvent>
+#include <QCoreApplication>
+
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
@@ -14,27 +19,64 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_gameTimer = new QTimer(this);
     m_waveTimer = new QTimer(this);
+    m_audio = new AudioManager(this);
+
 
     connect(m_gameTimer, &QTimer::timeout, this, &MainWindow::gameLoop);
     connect(m_waveTimer, &QTimer::timeout, this, &MainWindow::spawnWave);
 
+    m_highScore = SaveManager::loadHighScore();
+    m_sfxVolume = SaveManager::loadSfxVolume();
+    m_musicVolume = SaveManager::loadMusicVolume();
+    m_fullscreenEnabled = SaveManager::loadFullscreen();
+    m_selectedSetting = 0;
+
+    QString audioDir = QCoreApplication::applicationDirPath() + "/Assets/audio";
+    m_audio->load(audioDir);
+    m_audio->setVolumes(m_sfxVolume, m_musicVolume);
+    m_audio->playMusic();
+
     resetGame();
+    applyWindowMode();
+
+    m_gameState = GameState::Menu;
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+    update();
+
+}
+
+MainWindow::~MainWindow()
+{
+    delete ui;
 }
 
 void MainWindow::resetGame() {
     m_score = 0;
     m_playerHp = 3;
     m_currentWave = 1;
+    m_currentLevel = 1;
+    m_wavesClearedInLevel = 0;
+    m_waitingForNextWave = false;
+    m_nextWaveDelayTimer = 0.0;
+
     m_isGameOver = false;
+    m_bossActive = false;
+
     m_moveLeft = false;
     m_moveRight = false;
     m_shootCooldown = 0.25;
     m_timeSinceLastShot = m_player.getFireCooldown();
+    m_bossShootTimer = 0.0;
+    m_bossShotIndex = 0;
 
     m_enemies.clear();
+    m_bosses.clear();
     m_bullets.clear();
+    m_enemyBullets.clear();
     m_powerUps.clear();
     m_effects.clear();
+    m_floatingTexts.clear();
     m_chests.clear();
     m_hurtFlashTimer = 0.0;
 
@@ -44,34 +86,339 @@ void MainWindow::resetGame() {
     m_elapsedTimer.start();
     m_lastFrameTime = 0.0;
 
-    m_gameTimer->start(16);   // 60FPS
-    m_waveTimer->start(2500);  // 稍慢一些，更接近可玩的演示节奏
+    m_gameTimer->stop();
+    m_waveTimer->stop();
 }
 
-void MainWindow::spawnWave() {
-    if (m_isGameOver) return;
-    const int enemyWidth = 118;
-    int enemyCount = QRandomGenerator::global()->bounded(3, 6); // 随机3~5个 [cite: 5]
-    for (int i = 0; i < enemyCount; ++i) {
-        qreal randomX = QRandomGenerator::global()->bounded(35, m_screenWidth - enemyWidth - 35);
-        qreal startY = -70.0 - (i * 70.0);
-        qreal enemySpeed = 80.0 + (m_currentWave * 3.0);
-        m_enemies.append(Enemy(QPointF(randomX, startY), enemySpeed, m_currentWave));
-    }
-    // 随机生成宝箱：第 2 波以后有 35% 概率出现
-if (m_currentWave >= 2 && QRandomGenerator::global()->bounded(100) < 35) {
-    Chest chest;
+void MainWindow::updateHighScore()
+{
+    if (m_score > m_highScore) {
+        m_highScore = m_score;
+        SaveManager::saveHighScore(m_highScore);
 
-    qreal chestX = QRandomGenerator::global()->bounded(
-        40,
-        m_screenWidth - 90
+        qDebug() << "New high score saved:" << m_highScore;
+    }
+}
+
+void MainWindow::saveSettings()
+{
+    SaveManager::saveSettings(m_sfxVolume, m_musicVolume, m_fullscreenEnabled);
+
+    if (m_audio) {
+        m_audio->setVolumes(m_sfxVolume, m_musicVolume);
+    }
+}
+
+
+void MainWindow::applyWindowMode()
+{
+    if (m_fullscreenEnabled) {
+        showFullScreen();
+    } else {
+        showNormal();
+        setFixedSize(m_screenWidth, m_screenHeight);
+    }
+
+    update();
+}
+
+void MainWindow::playSfx()
+{
+    if (m_audio) {
+        m_audio->playPickup();
+    }
+}
+
+
+void MainWindow::addFloatingText(const QPointF& position,
+                                 const QString& text,
+                                 const QColor& color,
+                                 int fontSize)
+{
+    m_floatingTexts.append(FloatingText(position, text, color, fontSize));
+}
+
+
+void MainWindow::startBossBattle()
+{
+    m_bossActive = true;
+    m_bossShootTimer = 0.0;
+    m_bossShotIndex = 0;
+    m_enemyBullets.clear();
+
+
+    m_waveTimer->stop();
+
+    m_enemies.clear();
+    m_chests.clear();
+
+    m_bosses.append(BossEnemy(m_currentWave + m_currentLevel * 2, m_screenWidth));
+
+    m_effects.append(
+        ParticleEffect::ring(QPointF(m_screenWidth / 2.0, 120.0),
+                             QColor(255, 80, 90),
+                             36)
     );
 
-    chest.spawnChest(chestX, -80.0, m_currentWave);
-    m_chests.append(chest);
+    addFloatingText(QPointF(m_screenWidth / 2.0, 180.0),
+                "WARNING!",
+                QColor(255, 80, 90),
+                26);
 
-    qDebug() << "Chest spawned at wave" << m_currentWave;
+if (m_audio) {
+    m_audio->playBoss();
 }
+
+    qDebug() << "Boss battle started at wave" << m_currentWave;
+}
+
+void MainWindow::spawnBossBullets()
+{
+    if (m_bosses.isEmpty()) {
+        return;
+    }
+
+    QRectF bossBox = m_bosses.first().getHitbox();
+    QPointF origin(bossBox.center().x(), bossBox.bottom() - 4.0);
+
+    m_bossShotIndex++;
+
+    int bulletCount = 3;
+qreal startAngle = 60.0;
+qreal endAngle = 120.0;
+qreal bulletSpeed = 145.0;
+
+if (m_currentLevel == 1) {
+    // 第一关：3 发，中等角度，主要让玩家学会躲
+    bulletCount = 3;
+    startAngle = 60.0;
+    endAngle = 120.0;
+    bulletSpeed = 145.0;
+} else if (m_currentLevel == 2) {
+    // 第二关：4 发，稍微变宽
+    bulletCount = 4;
+    startAngle = 55.0;
+    endAngle = 125.0;
+    bulletSpeed = 165.0;
+} else if (m_currentLevel == 3) {
+    // 第三关：5 发，形成弹幕感，但还不加太多瞄准弹
+    bulletCount = 5;
+    startAngle = 50.0;
+    endAngle = 130.0;
+    bulletSpeed = 185.0;
+} else {
+    // 第四关以后：逐渐接近飞机大战弹幕
+    bulletCount = 5 + qMin(m_currentLevel - 4, 3); // 最多 8 发
+    startAngle = 45.0;
+    endAngle = 135.0;
+    bulletSpeed = 200.0 + qMin(m_currentLevel * 7.0, 55.0);
+}
+
+
+    // 偶数轮稍微错开角度，让弹幕有变化，但不要一开始就太难
+    if (m_currentLevel >= 3 && m_bossShotIndex % 2 == 0) {
+    startAngle += 5.0;
+    endAngle += 5.0;
+}
+
+
+    const qreal step = (bulletCount <= 1)
+        ? 0.0
+        : (endAngle - startAngle) / (bulletCount - 1);
+
+    for (int i = 0; i < bulletCount; ++i) {
+        qreal angleDegree = startAngle + step * i;
+        qreal angleRad = qDegreesToRadians(angleDegree);
+
+        QPointF direction(qCos(angleRad), qSin(angleRad));
+        m_enemyBullets.append(EnemyBullet(origin, direction, bulletSpeed));
+    }
+
+    // Level 3 开始：每隔一轮加一颗瞄准玩家的子弹
+    if (m_currentLevel >= 4 && m_bossShotIndex % 2 == 1) {
+        QPointF playerCenter = m_player.getHitbox().center();
+        QPointF aimDirection(
+            playerCenter.x() - origin.x(),
+            playerCenter.y() - origin.y()
+        );
+
+        m_enemyBullets.append(
+            EnemyBullet(origin, aimDirection, bulletSpeed + 20.0)
+        );
+    }
+
+    // Level 5 开始：偶尔加一颗偏移瞄准弹，形成更像飞机大战的压迫感
+    if (m_currentLevel >= 5 && m_bossShotIndex % 3 == 0) {
+        QPointF playerCenter = m_player.getHitbox().center();
+
+        QPointF leftAim(
+            playerCenter.x() - origin.x() - 55.0,
+            playerCenter.y() - origin.y()
+        );
+
+        QPointF rightAim(
+            playerCenter.x() - origin.x() + 55.0,
+            playerCenter.y() - origin.y()
+        );
+
+        m_enemyBullets.append(EnemyBullet(origin, leftAim, bulletSpeed + 10.0));
+        m_enemyBullets.append(EnemyBullet(origin, rightAim, bulletSpeed + 10.0));
+    }
+
+    m_effects.append(
+        ParticleEffect::ring(origin, QColor(255, 90, 110), 18)
+    );
+
+    qDebug() << "Boss fired"
+             << bulletCount
+             << "base bullets at level"
+             << m_currentLevel
+             << "shot index"
+             << m_bossShotIndex;
+}
+
+
+void MainWindow::startNewGame()
+{
+    resetGame();
+    m_gameState = GameState::Playing;
+    m_isGameOver = false;
+
+    m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
+
+    m_gameTimer->start(16);
+    m_waveTimer->stop();
+
+    spawnWave();
+
+    setFocus();
+    update();
+}
+
+void MainWindow::pauseGame()
+{
+    if (m_gameState != GameState::Playing) {
+        return;
+    }
+
+    m_gameState = GameState::Paused;
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+
+    m_moveLeft = false;
+    m_moveRight = false;
+    m_enemyBullets.clear();
+
+
+    update();
+}
+
+void MainWindow::resumeGame()
+{
+    if (m_gameState != GameState::Paused) {
+        return;
+    }
+
+    m_gameState = GameState::Playing;
+
+    m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
+
+    m_gameTimer->start(16);
+    m_waveTimer->stop();
+
+    setFocus();
+    update();
+}
+
+void MainWindow::returnToMenu()
+{
+    resetGame();
+    m_gameState = GameState::Menu;
+    m_isGameOver = false;
+
+    m_moveLeft = false;
+    m_moveRight = false;
+    m_enemyBullets.clear();
+
+
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+
+    update();
+}
+
+void MainWindow::spawnWave()
+{
+    if (m_gameState != GameState::Playing) {
+        return;
+    }
+
+    if (m_bossActive) {
+        return;
+    }
+
+    if (!m_enemies.isEmpty()) {
+        return;
+    }
+
+    if (m_wavesClearedInLevel >= 3) {
+        startBossBattle();
+        return;
+    }
+
+    const int enemyWidth = 118;
+
+    int enemyCount = QRandomGenerator::global()->bounded(
+        3 + m_currentLevel,
+        6 + m_currentLevel
+    );
+
+    if (enemyCount > 9) {
+        enemyCount = 9;
+    }
+
+    qreal baseSpeed = 80.0 + m_currentLevel * 15.0 + m_currentWave * 2.0;
+
+    for (int i = 0; i < enemyCount; ++i) {
+        qreal randomX = QRandomGenerator::global()->bounded(
+            35,
+            m_screenWidth - enemyWidth - 35
+        );
+
+        qreal startY = -70.0 - (i * 70.0);
+        qreal enemySpeed = baseSpeed + QRandomGenerator::global()->bounded(0, 30);
+
+        m_enemies.append(
+            Enemy(QPointF(randomX, startY), enemySpeed, m_currentWave)
+        );
+    }
+
+    if (m_currentWave >= 2 &&
+        QRandomGenerator::global()->bounded(100) < 35) {
+        Chest chest;
+
+        qreal chestX = QRandomGenerator::global()->bounded(
+            40,
+            m_screenWidth - 90
+        );
+
+        chest.spawnChest(chestX, -80.0, m_currentWave);
+        m_chests.append(chest);
+
+        qDebug() << "Chest spawned at wave" << m_currentWave;
+    }
+
+    addFloatingText(QPointF(m_screenWidth / 2.0, 165.0),
+                    QString("LEVEL %1 - WAVE %2")
+                        .arg(m_currentLevel)
+                        .arg(m_wavesClearedInLevel + 1),
+                    QColor(255, 218, 92),
+                    20);
+
+    qDebug() << "Wave spawned:"
+             << "level =" << m_currentLevel
+             << "wave =" << m_currentWave
+             << "count =" << enemyCount;
 
     m_currentWave++;
 }
@@ -81,7 +428,10 @@ void MainWindow::gameLoop() {
     qreal deltaTime = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
 
-    if (m_isGameOver) { update(); return; }
+    if (m_gameState != GameState::Playing) {
+    update();
+    return;
+}
 
     m_timeSinceLastShot += deltaTime;
 
@@ -97,6 +447,16 @@ for (auto it = m_effects.begin(); it != m_effects.end();) {
 
     if (it->isFinished()) {
         it = m_effects.erase(it);
+    } else {
+        ++it;
+    }
+}
+
+for (auto it = m_floatingTexts.begin(); it != m_floatingTexts.end();) {
+    it->update(deltaTime);
+
+    if (it->isFinished()) {
+        it = m_floatingTexts.erase(it);
     } else {
         ++it;
     }
@@ -118,12 +478,57 @@ for (auto it = m_effects.begin(); it != m_effects.end();) {
         else ++it;
     }
 
+    for (auto it = m_enemyBullets.begin(); it != m_enemyBullets.end();) {
+    it->update(deltaTime);
+
+    if (it->isOutOfBounds(m_screenWidth, m_screenHeight)) {
+        it = m_enemyBullets.erase(it);
+    } else {
+        ++it;
+    }
+}
+
+
     // 2. 驱动敌人物理（完全解耦，直接调用归位接口）
     for (auto it = m_enemies.begin(); it != m_enemies.end();) {
         it->moveDown(deltaTime);
         if (it->getPosition().y() > m_screenHeight) it = m_enemies.erase(it); // 越界清理
         else ++it;
     }
+
+    for (auto it = m_bosses.begin(); it != m_bosses.end();) {
+    it->update(deltaTime, m_screenWidth);
+
+if (it->getPosition().y() > m_screenHeight) {
+    it = m_bosses.erase(it);
+    m_bossActive = false;
+
+    m_currentLevel++;
+    m_wavesClearedInLevel = 0;
+    m_currentWave++;
+
+    m_waitingForNextWave = true;
+    m_nextWaveDelayTimer = 1.5;
+} else {
+    ++it;
+}
+
+}
+
+if (m_bossActive && !m_bosses.isEmpty()) {
+    m_bossShootTimer += deltaTime;
+
+    qreal bossShootInterval = 2.4 - 0.18 * (m_currentLevel - 1);
+
+    if (bossShootInterval < 1.05) {
+        bossShootInterval = 1.05;
+    }
+
+    if (m_bossShootTimer >= bossShootInterval) {
+        m_bossShootTimer = 0.0;
+        spawnBossBullets();
+    }
+}
 
     for (auto it = m_powerUps.begin(); it != m_powerUps.end();) {
     it->moveDown(deltaTime);
@@ -147,15 +552,48 @@ for (auto it = m_effects.begin(); it != m_effects.end();) {
 
 
     // 3. 碰撞仲裁
-    checkCollisions();
-    update();
+    // 3. 碰撞仲裁
+checkCollisions();
+
+if (m_gameState == GameState::Playing &&
+    !m_bossActive &&
+    m_bosses.isEmpty() &&
+    m_enemies.isEmpty() &&
+    m_chests.isEmpty() &&
+    !m_waitingForNextWave) {
+
+    m_wavesClearedInLevel++;
+    m_waitingForNextWave = true;
+    m_nextWaveDelayTimer = 1.4;
+
+    qDebug() << "Wave cleared. Cleared in level ="
+             << m_wavesClearedInLevel;
+}
+
+if (m_waitingForNextWave) {
+    m_nextWaveDelayTimer -= deltaTime;
+
+    if (m_nextWaveDelayTimer <= 0.0) {
+        m_waitingForNextWave = false;
+        m_nextWaveDelayTimer = 0.0;
+        spawnWave();
+    }
+}
+
+update();
+
 }
 
 void MainWindow::checkCollisions() {
-    if (m_isGameOver) return;
+    if (m_gameState != GameState::Playing) return;
 
     // 子弹 VS 宝箱
 for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
+    if (chestIt->getHitbox().bottom() < 10.0) {
+        ++chestIt;
+        continue;
+    }
+
     bool chestRemoved = false;
 
     for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end();) {
@@ -174,6 +612,10 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
 
         if (chestIt->isDead()) {
             qDebug() << "Chest opened at wave" << chestIt->getWave();
+
+            if (m_audio) {
+                m_audio->playChest();
+            }
 
             m_gameTimer->stop();
             m_waveTimer->stop();
@@ -197,10 +639,11 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
 
             m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
 
-            if (!m_isGameOver) {
+            if (m_gameState == GameState::Playing) {
                 m_gameTimer->start(16);
-                m_waveTimer->start(2500);
+                m_waveTimer->stop();
             }
+
 
             chestIt = m_chests.erase(chestIt);
             chestRemoved = true;
@@ -212,39 +655,176 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
         ++chestIt;
     }
 }
-
-    // 子弹 VS 敌人 [cite: 6]
-    for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
-        bool enemyDestroyed = false;
-        for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end(); ) {
-            if (enemyIt->getHitbox().intersects(bulletIt->getHitbox())) {
-                enemyIt->getHurt(1);
-                bulletIt = m_bullets.erase(bulletIt);
-                if (enemyIt->isDead()) {
-                    m_score += enemyIt->getScoreValue();
-                    m_effects.append(
-                        ParticleEffect::explosion(enemyIt->getHitbox().center(), QColor(255, 218, 92), 18)
-                    );
-
-                    QPointF dropPos = enemyIt->getPosition();
-
-                    int chance = QRandomGenerator::global()->bounded(100);
-                    if (chance < 30) {
-                        m_powerUps.append(PowerUp(dropPos, PowerUpType::Heal));
-                    }
-
-                    enemyIt = m_enemies.erase(enemyIt);
-                    enemyDestroyed = true;
-                    break;
-                }                
-
-            } else { ++bulletIt; }
-        }
-        if (!enemyDestroyed) ++enemyIt;
+    
+    // 子弹 VS 敌人：伤害、暴击、穿透全部生效
+for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
+    if (enemyIt->getHitbox().bottom() < 10.0) {
+        ++enemyIt;
+        continue;
     }
 
+    bool enemyDestroyed = false;
+
+    for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end(); ) {
+        if (!enemyIt->getHitbox().intersects(bulletIt->getHitbox())) {
+            ++bulletIt;
+            continue;
+        }
+
+        QPointF hitCenter = enemyIt->getHitbox().center();
+        QPointF dropPos = enemyIt->getPosition();
+
+        enemyIt->getHurt(bulletIt->getDamage());
+
+        if (bulletIt->getCrit()) {
+            m_effects.append(
+                ParticleEffect::explosion(hitCenter, QColor(255, 80, 80), 10)
+            );
+        }
+
+        bool shouldRemoveBullet = bulletIt->consumePierce();
+
+        if (enemyIt->isDead()) {
+            int gainedScore = enemyIt->getScoreValue();
+            m_score += gainedScore;
+
+            addFloatingText(hitCenter,
+                            QString("+%1").arg(gainedScore),
+                            QColor(255, 218, 92),
+                            15);
+
+            playSfx();
+
+            m_effects.append(
+                ParticleEffect::explosion(hitCenter, QColor(255, 218, 92), 18)
+            );
+
+            int chance = QRandomGenerator::global()->bounded(100);
+            if (chance < 30) {
+                m_powerUps.append(PowerUp(dropPos, PowerUpType::Heal));
+            }
+
+            enemyIt = m_enemies.erase(enemyIt);
+            enemyDestroyed = true;
+        }
+
+        if (shouldRemoveBullet) {
+            bulletIt = m_bullets.erase(bulletIt);
+        } else {
+            ++bulletIt;
+        }
+
+        if (enemyDestroyed) {
+            break;
+        }
+    }
+
+    if (!enemyDestroyed) {
+        ++enemyIt;
+    }
+}
+
+// 子弹 VS Boss
+for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
+    if (bossIt->getHitbox().bottom() < 10.0) {
+        ++bossIt;
+        continue;
+    }
+
+    bool bossDestroyed = false;
+
+    for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end();) {
+        if (!bossIt->getHitbox().intersects(bulletIt->getHitbox())) {
+            ++bulletIt;
+            continue;
+        }
+
+        QPointF hitCenter = bulletIt->getHitbox().center();
+
+        bossIt->takeDamage(bulletIt->getDamage());
+
+        if (bulletIt->getCrit()) {
+            m_effects.append(
+                ParticleEffect::explosion(hitCenter, QColor(255, 80, 80), 12)
+            );
+        }
+
+        bool shouldRemoveBullet = bulletIt->consumePierce();
+
+        if (bossIt->isDead()) {
+            QPointF dropCenter = bossIt->getHitbox().center();
+
+            int gainedScore = bossIt->getScoreValue();
+            m_score += gainedScore;
+
+            addFloatingText(dropCenter,
+                            QString("BOSS CLEAR  +%1").arg(gainedScore),
+                            QColor(255, 218, 92),
+                            20);
+
+            if (m_audio) {
+                m_audio->playBoss();
+            }
+
+            m_effects.append(
+                ParticleEffect::explosion(dropCenter, QColor(255, 80, 90), 48)
+            );
+
+            for (int i = 0; i < 5; ++i) {
+                QPointF dropPos(
+                    dropCenter.x() - 70.0 + i * 35.0,
+                    dropCenter.y()
+                );
+
+                PowerUpType type = (i % 2 == 0)
+                    ? PowerUpType::Heal
+                    : PowerUpType::WeaponUpgrade;
+
+                m_powerUps.append(PowerUp(dropPos, type));
+            }
+
+            bossIt = m_bosses.erase(bossIt);
+            bossDestroyed = true;
+            m_bossActive = false;
+            m_enemyBullets.clear();
+
+
+            m_currentLevel++;
+            m_wavesClearedInLevel = 0;
+
+            m_waitingForNextWave = true;
+            m_nextWaveDelayTimer = 2.0;
+
+            addFloatingText(QPointF(m_screenWidth / 2.0, 230.0),
+                            QString("LEVEL %1").arg(m_currentLevel),
+                            QColor(255, 218, 92),
+                            24);
+
+            qDebug() << "Boss defeated. Score =" << m_score
+                    << "Next level =" << m_currentLevel;
+
+        }
+
+        if (shouldRemoveBullet) {
+            bulletIt = m_bullets.erase(bulletIt);
+        } else {
+            ++bulletIt;
+        }
+
+        if (bossDestroyed) {
+            break;
+        }
+    }
+
+    if (!bossDestroyed) {
+        ++bossIt;
+    }
+}
+
     // 玩家 VS 敌人 [cite: 6]
-    QRectF playerBox = m_player.getHitbox();
+    QRectF playerBox = m_player.getCollisionBox();
+QRectF playerHitbox = playerBox;
+
     for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
         if (enemyIt->getHitbox().intersects(playerBox)) {
     m_hurtFlashTimer = 0.18;
@@ -256,15 +836,123 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
     enemyIt = m_enemies.erase(enemyIt);
     m_playerHp--;
 
-    if (m_playerHp <= 0) {
-        m_isGameOver = true;
-        m_waveTimer->stop();
-    }
+    addFloatingText(m_player.getHitbox().center(),
+                "-1 HP",
+                QColor(255, 80, 90),
+                16);
+
+if (m_audio) {
+    m_audio->playHit();
+}
+
+
+   if (m_playerHp <= 0) {
+    m_isGameOver = true;
+    m_gameState = GameState::GameOver;
+
+    updateHighScore();
+
+    m_gameTimer->stop();
+    m_waveTimer->stop();
+
+    m_moveLeft = false;
+    m_moveRight = false;
+    m_enemyBullets.clear();
+
+   }
+
 }
 else { ++enemyIt; }
     }
 
-    QRectF playerHitbox = m_player.getHitbox();
+    // 玩家 VS Boss
+for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end(); ++bossIt) {
+    if (bossIt->getHitbox().intersects(playerBox) && m_hurtFlashTimer <= 0.0) {
+        m_hurtFlashTimer = 0.35;
+
+        m_effects.append(
+            ParticleEffect::explosion(m_player.getHitbox().center(),
+                                      QColor(255, 80, 80),
+                                      18)
+        );
+
+        m_playerHp--;
+
+        addFloatingText(playerHitbox.center(),
+                "-1 HP",
+                QColor(255, 80, 90),
+                16);
+
+        if (m_audio) {
+            m_audio->playHit();
+        }
+
+        if (m_playerHp <= 0) {
+            m_isGameOver = true;
+            m_gameState = GameState::GameOver;
+
+            updateHighScore();
+
+            m_gameTimer->stop();
+            m_waveTimer->stop();
+
+            m_moveLeft = false;
+            m_moveRight = false;
+            m_enemyBullets.clear();
+
+        }
+    }
+}
+
+  for (auto bulletIt = m_enemyBullets.begin(); bulletIt != m_enemyBullets.end();) {
+    if (bulletIt->getHitbox().intersects(playerHitbox)) {
+        bulletIt = m_enemyBullets.erase(bulletIt);
+
+        if (m_hurtFlashTimer <= 0.0) {
+            m_hurtFlashTimer = 0.25;
+
+            m_effects.append(
+                ParticleEffect::explosion(playerHitbox.center(),
+                                          QColor(255, 80, 90),
+                                          16)
+            );
+
+            m_playerHp--;
+
+            addFloatingText(playerHitbox.center(),
+                "-1 HP",
+                QColor(255, 80, 90),
+                16);
+
+if (m_audio) {
+    m_audio->playHit();
+}
+
+
+
+            qDebug() << "Player hit by boss bullet. HP =" << m_playerHp;
+
+            if (m_playerHp <= 0) {
+                m_isGameOver = true;
+                m_gameState = GameState::GameOver;
+
+                updateHighScore();
+
+                m_gameTimer->stop();
+                m_waveTimer->stop();
+
+                m_moveLeft = false;
+                m_moveRight = false;
+                m_enemyBullets.clear();
+
+
+                break;
+            }
+        }
+    } else {
+        ++bulletIt;
+    }
+}
 
 for (auto powerIt = m_powerUps.begin(); powerIt != m_powerUps.end();) {
     if (powerIt->getHitbox().intersects(playerHitbox)) {
@@ -273,14 +961,38 @@ for (auto powerIt = m_powerUps.begin(); powerIt != m_powerUps.end();) {
         );
 
         if (powerIt->getType() == PowerUpType::Heal) {
-            m_playerHp += 1;
+    m_playerHp += 1;
 
-            if (m_playerHp > 5) {
-                m_playerHp = 5;
-            }
+    if (m_playerHp > 5) {
+        m_playerHp = 5;
+    }
 
-            qDebug() << "PowerUp picked: HP +1";
-        }
+    addFloatingText(playerHitbox.center(),
+                "+1 HP",
+                QColor(80, 220, 120),
+                15);
+
+if (m_audio) {
+    m_audio->playPickup();
+}
+
+    qDebug() << "PowerUp picked: HP +1";
+} else if (powerIt->getType() == PowerUpType::WeaponUpgrade) {
+    if (m_player.increaseWeaponLevel()) {
+        addFloatingText(playerHitbox.center(),
+                QString("Weapon Lv %1").arg(m_player.getWeaponLevel()),
+                QColor(255, 218, 92),
+                15);
+
+playSfx();
+
+        qDebug() << "PowerUp picked: weapon level ="
+                 << m_player.getWeaponLevel();
+    } else {
+        qDebug() << "PowerUp picked: weapon already max";
+    }
+}
+
 
         powerIt = m_powerUps.erase(powerIt);
     } else {
@@ -301,6 +1013,10 @@ void MainWindow::paintEvent(QPaintEvent *event) {
         enemy.draw(painter);
     }
 
+    for (auto& boss : m_bosses) {
+    boss.draw(painter);
+}
+
     for (auto& powerUp : m_powerUps) {
         powerUp.draw(painter);
     }
@@ -319,10 +1035,17 @@ void MainWindow::paintEvent(QPaintEvent *event) {
         painter.setBrush(QColor(255, 218, 92));
     }
 
+    for (const auto& enemyBullet : m_enemyBullets) {
+    enemyBullet.draw(painter);
+}
+
     for (const auto& effect : m_effects) {
     effect.draw(painter);
 }
 
+for (const auto& text : m_floatingTexts) {
+    text.draw(painter);
+}
 
     drawPlayer(painter);
     drawHud(painter);
@@ -336,22 +1059,197 @@ void MainWindow::paintEvent(QPaintEvent *event) {
 }
 
 
-    if (m_isGameOver) {
-        painter.fillRect(rect(), QColor(0, 0, 0, 160));
-        painter.setPen(Qt::white);
-        painter.setFont(QFont("Arial", 22, QFont::Bold));
-        painter.drawText(rect(), Qt::AlignCenter, "GAME OVER\n\nPress R to Restart");
-    }
+    if (m_gameState == GameState::Menu) {
+    drawMenu(painter);
+} else if (m_gameState == GameState::Settings) {
+    drawSettingsMenu(painter);
+} else if (m_gameState == GameState::Paused) {
+    drawPauseOverlay(painter);
+} else if (m_gameState == GameState::GameOver) {
+    drawGameOverOverlay(painter);
 }
 
-void MainWindow::keyPressEvent(QKeyEvent *event) {
+
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
     if (event->isAutoRepeat()) {
         QMainWindow::keyPressEvent(event);
         return;
     }
 
-    if (m_isGameOver && event->key() == Qt::Key_R) {
-        resetGame();
+    // 主菜单
+if (m_gameState == GameState::Menu) {
+    if (event->key() == Qt::Key_Return ||
+        event->key() == Qt::Key_Enter ||
+        event->key() == Qt::Key_Space) {
+        startNewGame();
+        return;
+    }
+
+    if (event->key() == Qt::Key_S) {
+        m_gameState = GameState::Settings;
+        m_selectedSetting = 0;
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Q) {
+        close();
+        return;
+    }
+
+    return;
+}
+
+if (m_gameState == GameState::Settings) {
+    if (event->key() == Qt::Key_Escape ||
+        event->key() == Qt::Key_M) {
+        m_gameState = GameState::Menu;
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_W) {
+        m_selectedSetting--;
+
+        if (m_selectedSetting < 0) {
+            m_selectedSetting = 3;
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Down || event->key() == Qt::Key_S) {
+        m_selectedSetting++;
+
+        if (m_selectedSetting > 3) {
+            m_selectedSetting = 0;
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Left || event->key() == Qt::Key_A) {
+        if (m_selectedSetting == 0) {
+            m_sfxVolume -= 10;
+            if (m_sfxVolume < 0) {
+                m_sfxVolume = 0;
+            }
+            saveSettings();
+        } else if (m_selectedSetting == 1) {
+            m_musicVolume -= 10;
+            if (m_musicVolume < 0) {
+                m_musicVolume = 0;
+            }
+            saveSettings();
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_Right || event->key() == Qt::Key_D) {
+        if (m_selectedSetting == 0) {
+            m_sfxVolume += 10;
+            if (m_sfxVolume > 100) {
+                m_sfxVolume = 100;
+            }
+            saveSettings();
+        } else if (m_selectedSetting == 1) {
+            m_musicVolume += 10;
+            if (m_musicVolume > 100) {
+                m_musicVolume = 100;
+            }
+            saveSettings();
+        }
+
+        update();
+        return;
+    }
+
+    if (event->key() == Qt::Key_F ||
+        event->key() == Qt::Key_Return ||
+        event->key() == Qt::Key_Enter ||
+        event->key() == Qt::Key_Space) {
+        if (m_selectedSetting == 2) {
+            m_fullscreenEnabled = !m_fullscreenEnabled;
+            saveSettings();
+            applyWindowMode();
+            return;
+        }
+
+        if (m_selectedSetting == 3) {
+            m_gameState = GameState::Menu;
+            update();
+            return;
+        }
+    }
+
+    return;
+}
+
+    // 游戏中按 ESC 暂停
+    if (m_gameState == GameState::Playing &&
+        event->key() == Qt::Key_Escape) {
+        pauseGame();
+        return;
+    }
+
+    // 暂停菜单
+    if (m_gameState == GameState::Paused) {
+        if (event->key() == Qt::Key_Escape ||
+            event->key() == Qt::Key_Return ||
+            event->key() == Qt::Key_Enter) {
+            resumeGame();
+            return;
+        }
+
+        if (event->key() == Qt::Key_R) {
+            startNewGame();
+            return;
+        }
+
+        if (event->key() == Qt::Key_M) {
+            returnToMenu();
+            return;
+        }
+
+        if (event->key() == Qt::Key_Q) {
+            close();
+            return;
+        }
+
+        return;
+    }
+
+    // Game Over 菜单
+    if (m_gameState == GameState::GameOver) {
+        if (event->key() == Qt::Key_R ||
+            event->key() == Qt::Key_Return ||
+            event->key() == Qt::Key_Enter) {
+            startNewGame();
+            return;
+        }
+
+        if (event->key() == Qt::Key_M) {
+            returnToMenu();
+            return;
+        }
+
+        if (event->key() == Qt::Key_Q) {
+            close();
+            return;
+        }
+
+        return;
+    }
+
+    // 下面只处理 Playing 状态
+    if (m_gameState != GameState::Playing) {
         return;
     }
 
@@ -365,20 +1263,8 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
-    // 临时测试武器升级，后续由宝箱触发
-if (event->key() == Qt::Key_U && !m_isGameOver) {
-    if (m_player.increaseWeaponLevel()) {
-        qDebug() << "Weapon upgraded:"
-                 << "level =" << m_player.getWeaponLevel()
-                 << "bullet count =" << m_player.getWeapon().getBulletCount();
-    } else {
-        qDebug() << "Weapon already at max level";
-    }
 
-    return;
-}
-
-    if (event->key() == Qt::Key_Space && !m_isGameOver) {
+    if (event->key() == Qt::Key_Space) {
         shootBullet();
         return;
     }
@@ -386,10 +1272,6 @@ if (event->key() == Qt::Key_U && !m_isGameOver) {
     QMainWindow::keyPressEvent(event);
 }
 
-MainWindow::~MainWindow()
-{
-    delete ui;
-}
 
 void MainWindow::keyReleaseEvent(QKeyEvent *event)
 {
@@ -411,8 +1293,113 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
     QMainWindow::keyReleaseEvent(event);
 }
 
+void MainWindow::mousePressEvent(QMouseEvent *event)
+{
+    QPointF pos = event->position();
+
+    if (m_gameState == GameState::Menu) {
+        QRectF startRect(70, 240, m_screenWidth - 140, 40);
+        QRectF settingsRect(70, 295, m_screenWidth - 140, 40);
+        QRectF quitRect(70, 350, m_screenWidth - 140, 40);
+
+        if (startRect.contains(pos)) {
+            startNewGame();
+            return;
+        }
+
+        if (settingsRect.contains(pos)) {
+            m_gameState = GameState::Settings;
+            m_selectedSetting = 0;
+            update();
+            return;
+        }
+
+        if (quitRect.contains(pos)) {
+            close();
+            return;
+        }
+    }
+
+    if (m_gameState == GameState::Settings) {
+        QRectF sfxRect(70, 230, m_screenWidth - 140, 40);
+        QRectF musicRect(70, 285, m_screenWidth - 140, 40);
+        QRectF fullscreenRect(70, 340, m_screenWidth - 140, 40);
+        QRectF backRect(70, 420, m_screenWidth - 140, 40);
+
+        if (sfxRect.contains(pos)) {
+            m_selectedSetting = 0;
+            update();
+            return;
+        }
+
+        if (musicRect.contains(pos)) {
+            m_selectedSetting = 1;
+            update();
+            return;
+        }
+
+        if (fullscreenRect.contains(pos)) {
+            m_selectedSetting = 2;
+            m_fullscreenEnabled = !m_fullscreenEnabled;
+            saveSettings();
+            applyWindowMode();
+            return;
+        }
+
+        if (backRect.contains(pos)) {
+            m_gameState = GameState::Menu;
+            update();
+            return;
+        }
+    }
+
+    if (m_gameState == GameState::Paused) {
+        QRectF resumeRect(70, 310, m_screenWidth - 140, 40);
+        QRectF restartRect(70, 360, m_screenWidth - 140, 40);
+        QRectF menuRect(70, 410, m_screenWidth - 140, 40);
+
+        if (resumeRect.contains(pos)) {
+            resumeGame();
+            return;
+        }
+
+        if (restartRect.contains(pos)) {
+            startNewGame();
+            return;
+        }
+
+        if (menuRect.contains(pos)) {
+            returnToMenu();
+            return;
+        }
+    }
+
+    if (m_gameState == GameState::GameOver) {
+        QRectF restartRect(70, 390, m_screenWidth - 140, 40);
+        QRectF menuRect(70, 440, m_screenWidth - 140, 40);
+
+        if (restartRect.contains(pos)) {
+            startNewGame();
+            return;
+        }
+
+        if (menuRect.contains(pos)) {
+            returnToMenu();
+            return;
+        }
+    }
+
+    QMainWindow::mousePressEvent(event);
+}
+
+
 void MainWindow::shootBullet()
 {
+
+    if (m_gameState != GameState::Playing) {
+        return;
+    }
+
     const qreal cooldown = m_player.getFireCooldown();
 
     if (m_timeSinceLastShot < cooldown) {
@@ -428,6 +1415,9 @@ void MainWindow::shootBullet()
 
     m_player.getWeapon().fire(origin, m_bullets);
 
+    if (m_audio) {
+    m_audio->playShoot();
+}
     m_timeSinceLastShot = 0.0;
 
     qDebug() << "Space pressed:"
@@ -516,8 +1506,9 @@ void MainWindow::drawHud(QPainter &painter)
 
     painter.setPen(QColor(255, 255, 255));
     painter.setFont(QFont("Arial", 14, QFont::Black));
-    painter.drawText(28, 39, QString("Score %1").arg(m_score));
-    painter.drawText(178, 39, QString("Weapon Lv: %1").arg(m_player.getWeaponLevel()));
+    painter.drawText(24, 39, QString("Score %1").arg(m_score));
+    painter.drawText(142, 39, QString("Lv %1").arg(m_currentLevel));
+    painter.drawText(205, 39, QString("Weapon %1").arg(m_player.getWeaponLevel()));
 
     QString hpText = "HP ";
     for (int i = 0; i < m_playerHp; ++i) {
@@ -526,5 +1517,176 @@ void MainWindow::drawHud(QPainter &painter)
     if (m_playerHp <= 0) {
         hpText += "DEAD";
     }
-    painter.drawText(m_screenWidth - 118, 39, hpText);
+    painter.drawText(m_screenWidth - 95, 39, hpText);
+
+}
+
+
+void MainWindow::drawMenu(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 175));
+
+    painter.setPen(QColor(255, 218, 92));
+    painter.setFont(QFont("Arial", 30, QFont::Black));
+    painter.drawText(QRectF(0, 110, m_screenWidth, 60),
+                     Qt::AlignCenter,
+                     "The Level Two");
+
+    painter.setPen(QPen(QColor(255, 218, 92, 120), 2));
+    painter.setBrush(QColor(30, 30, 35, 160));
+    painter.drawRoundedRect(QRectF(70, 240, m_screenWidth - 140, 40), 10, 10);
+    painter.drawRoundedRect(QRectF(70, 295, m_screenWidth - 140, 40), 10, 10);
+    painter.drawRoundedRect(QRectF(70, 350, m_screenWidth - 140, 40), 10, 10);
+
+    painter.setPen(QColor(230, 230, 230));
+    painter.setFont(QFont("Microsoft YaHei", 16, QFont::Bold));
+
+    painter.drawText(QRectF(0, 240, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 Enter / Space 开始游戏");
+
+    painter.drawText(QRectF(0, 295, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 S 设置");
+
+    painter.drawText(QRectF(0, 350, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 Q 退出");
+
+    painter.setPen(QColor(255, 218, 92));
+    painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    painter.drawText(QRectF(0, 410, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("最高分：%1").arg(m_highScore));
+
+    painter.setPen(QColor(160, 160, 160));
+    painter.setFont(QFont("Microsoft YaHei", 11));
+    painter.drawText(QRectF(0, 470, m_screenWidth, 80),
+                     Qt::AlignCenter,
+                     "操作：A/D 或方向键移动，Space 射击，ESC 暂停，鼠标可点击菜单"
+);
+}
+
+void MainWindow::drawSettingsMenu(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 185));
+
+    painter.setPen(QColor(255, 218, 92));
+    painter.setFont(QFont("Arial", 28, QFont::Black));
+    painter.drawText(QRectF(0, 100, m_screenWidth, 60),
+                     Qt::AlignCenter,
+                     "SETTINGS");
+
+    painter.setFont(QFont("Microsoft YaHei", 15, QFont::Bold));
+
+    painter.setPen(QPen(QColor(255, 218, 92, 110), 2));
+    painter.setBrush(QColor(30, 30, 35, 160));
+    painter.drawRoundedRect(QRectF(70, 230, m_screenWidth - 140, 40), 10, 10);
+    painter.drawRoundedRect(QRectF(70, 285, m_screenWidth - 140, 40), 10, 10);
+    painter.drawRoundedRect(QRectF(70, 340, m_screenWidth - 140, 40), 10, 10);
+    painter.drawRoundedRect(QRectF(70, 420, m_screenWidth - 140, 40), 10, 10);
+
+    QString sfxPrefix = (m_selectedSetting == 0) ? "> " : "  ";
+    QString musicPrefix = (m_selectedSetting == 1) ? "> " : "  ";
+    QString fullscreenPrefix = (m_selectedSetting == 2) ? "> " : "  ";
+    QString backPrefix = (m_selectedSetting == 3) ? "> " : "  ";
+
+    painter.setPen(m_selectedSetting == 0 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 230, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1音效音量：%2").arg(sfxPrefix).arg(m_sfxVolume));
+
+    painter.setPen(m_selectedSetting == 1 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 285, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1音乐音量：%2").arg(musicPrefix).arg(m_musicVolume));
+
+    painter.setPen(m_selectedSetting == 2 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 340, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1全屏：%2")
+                         .arg(fullscreenPrefix)
+                         .arg(m_fullscreenEnabled ? "开" : "关"));
+
+    painter.setPen(m_selectedSetting == 3 ? QColor(255, 218, 92) : QColor(230, 230, 230));
+    painter.drawText(QRectF(0, 420, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     QString("%1返回主菜单").arg(backPrefix));
+
+    painter.setPen(QColor(160, 160, 160));
+    painter.setFont(QFont("Microsoft YaHei", 11));
+    painter.drawText(QRectF(0, 520, m_screenWidth, 100),
+                     Qt::AlignCenter,
+                     "↑/↓ 选择，←/→ 调整音量，Enter/F 切换全屏，ESC 返回");
+}
+
+
+void MainWindow::drawPauseOverlay(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 150));
+
+    painter.setPen(QColor(255, 255, 255));
+    painter.setFont(QFont("Arial", 28, QFont::Black));
+    painter.drawText(QRectF(0, 210, m_screenWidth, 60),
+                     Qt::AlignCenter,
+                     "PAUSED");
+
+    painter.setPen(QPen(QColor(255, 255, 255, 110), 2));
+painter.setBrush(QColor(30, 30, 35, 170));
+painter.drawRoundedRect(QRectF(70, 310, m_screenWidth - 140, 40), 10, 10);
+painter.drawRoundedRect(QRectF(70, 360, m_screenWidth - 140, 40), 10, 10);
+painter.drawRoundedRect(QRectF(70, 410, m_screenWidth - 140, 40), 10, 10);
+
+    painter.setPen(QColor(255, 255, 255));
+    painter.setFont(QFont("Microsoft YaHei", 15, QFont::Bold));
+    painter.drawText(QRectF(0, 310, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 ESC / Enter 继续");
+
+    painter.drawText(QRectF(0, 360, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 R 重新开始");
+
+    painter.drawText(QRectF(0, 410, m_screenWidth, 40),
+                     Qt::AlignCenter,
+                     "按 M 返回主菜单");
+}
+
+void MainWindow::drawGameOverOverlay(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 175));
+
+    painter.setPen(QColor(255, 90, 90));
+    painter.setFont(QFont("Arial", 30, QFont::Black));
+    painter.drawText(QRectF(0, 170, m_screenWidth, 70),
+                     Qt::AlignCenter,
+                     "GAME OVER");
+
+    painter.setPen(QColor(255, 255, 255));
+    painter.setFont(QFont("Microsoft YaHei", 17, QFont::Bold));
+    painter.drawText(QRectF(0, 270, m_screenWidth, 45),
+                     Qt::AlignCenter,
+                     QString("最终分数：%1").arg(m_score));
+
+    painter.setPen(QColor(255, 218, 92));
+painter.drawText(QRectF(0, 315, m_screenWidth, 45),
+                 Qt::AlignCenter,
+                 QString("最高分：%1").arg(m_highScore));
+
+    painter.setPen(QPen(QColor(255, 255, 255, 110), 2));
+painter.setBrush(QColor(30, 30, 35, 170));
+painter.drawRoundedRect(QRectF(70, 390, m_screenWidth - 140, 40), 10, 10);
+painter.drawRoundedRect(QRectF(70, 440, m_screenWidth - 140, 40), 10, 10);
+
+    painter.setPen(QColor(255, 255, 255));
+    painter.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    painter.setPen(QColor(255, 255, 255));
+painter.drawText(QRectF(0, 390, m_screenWidth, 40),
+                 Qt::AlignCenter,
+                 "按 R / Enter 再来一局");
+
+painter.drawText(QRectF(0, 440, m_screenWidth, 40),
+                 Qt::AlignCenter,
+                 "按 M 返回主菜单");
+
 }

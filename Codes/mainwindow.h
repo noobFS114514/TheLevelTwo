@@ -5,12 +5,24 @@
 #include <QTimer>
 #include <QList>
 #include <QElapsedTimer>
+
 #include "Player.h"
 #include "Enemy.h"
 #include "Bullet.h"
 #include "PowerUp.h"
 #include "ParticleEffect.h"
 #include "Chest.h"
+#include "SaveManager.h"
+#include "BossEnemy.h"
+#include "EnemyBullet.h"
+#include "FloatingText.h"
+#include "AudioManager.h"
+
+
+class QPainter;
+class QPaintEvent;
+class QKeyEvent;
+class QMouseEvent;
 
 
 QT_BEGIN_NAMESPACE
@@ -26,53 +38,99 @@ public:
     ~MainWindow() override;
 
 protected:
-    // A1 板块需要的绘图事件和键盘事件
     void paintEvent(QPaintEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
 
 private slots:
-    void gameLoop();    // 核心游戏循环驱动（约 60 FPS）
-    void spawnWave();   // A3核心：波次生成器
+    void gameLoop();
+    void spawnWave();
 
 private:
+    enum class GameState {
+    Menu,
+    Settings,
+    Playing,
+    Paused,
+    GameOver
+};
+
+
     Ui::MainWindow *ui;
 
-    // 游戏核心循环驱动
     QTimer* m_gameTimer;
     QTimer* m_waveTimer;
-    QElapsedTimer m_elapsedTimer; // 用于精准计算 deltaTime
+    AudioManager* m_audio;
+    QElapsedTimer m_elapsedTimer;
     qreal m_lastFrameTime;
 
-    // 游戏实体管理容器
     Player m_player;
     QList<Enemy> m_enemies;
-    QList<Bullet> m_bullets; // 用于接收来自 Player 发射的子弹
+    QList<BossEnemy> m_bosses;
+    QList<Bullet> m_bullets;
+    QList<EnemyBullet> m_enemyBullets;
     QList<PowerUp> m_powerUps;
     QList<Chest> m_chests;
     QList<ParticleEffect> m_effects;
-    qreal m_hurtFlashTimer;
+    QList<FloatingText> m_floatingTexts;
 
-    // A3 计分与状态变量
     int m_score;
+    int m_highScore;
     int m_playerHp;
-    int m_currentWave; // 当前波次
+    int m_currentWave;
+    int m_currentLevel;
+    int m_wavesClearedInLevel;
+    bool m_waitingForNextWave;
+    qreal m_nextWaveDelayTimer;
+
+    int m_sfxVolume;
+    int m_musicVolume;
+    bool m_fullscreenEnabled;
+    int m_selectedSetting;
     bool m_isGameOver;
+    bool m_bossActive;
+    GameState m_gameState;
     bool m_moveLeft;
     bool m_moveRight;
     qreal m_shootCooldown;
     qreal m_timeSinceLastShot;
+    qreal m_bossShootTimer;
+    int m_bossShotIndex;
+    qreal m_hurtFlashTimer;
 
-    // 竖版屏幕尺寸常数
     const int m_screenWidth = 450;
     const int m_screenHeight = 800;
 
-    void resetGame();       // 游戏初始化与重置
-    void checkCollisions(); // A3核心：轴对齐矩形碰撞检测
-    void shootBullet();     // A2核心：单发子弹生成
+    void resetGame();
+    void updateHighScore();
+    void saveSettings();
+    void applyWindowMode();
+    void playSfx();
+    void addFloatingText(const QPointF& position,
+                     const QString& text,
+                     const QColor& color,
+                     int fontSize = 16);
+
+
+    void startBossBattle();
+    void spawnBossBullets();
+    void startNewGame();
+
+    void pauseGame();
+    void resumeGame();
+    void returnToMenu();
+
+    void checkCollisions();
+    void shootBullet();
+
     void drawBackground(QPainter &painter);
     void drawPlayer(QPainter &painter);
     void drawHud(QPainter &painter);
+    void drawMenu(QPainter &painter);
+    void drawSettingsMenu(QPainter &painter);
+    void drawPauseOverlay(QPainter &painter);
+    void drawGameOverOverlay(QPainter &painter);
 };
 
 #endif // MAINWINDOW_H

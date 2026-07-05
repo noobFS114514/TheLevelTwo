@@ -52,6 +52,12 @@ qreal getFireCooldown() const {
     return weapon.getAttackCooldown();
 }
 
+QRectF getCollisionBox() const
+{
+    return hitbox.adjusted(24.0, 18.0, -24.0, -12.0);
+}
+
+
     // 【核心】给队友的空壳接口全部补齐空实现体 {}
     void setHealth(const int H) { health = H; }
     void setWeapon() {}
