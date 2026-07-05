@@ -47,8 +47,14 @@ void MainWindow::resetGame() {
     m_score = 0;
     m_playerHp = 3;
     m_currentWave = 1;
+    m_currentLevel = 1;
+    m_wavesClearedInLevel = 0;
+    m_waitingForNextWave = false;
+    m_nextWaveDelayTimer = 0.0;
+
     m_isGameOver = false;
     m_bossActive = false;
+
     m_moveLeft = false;
     m_moveRight = false;
     m_shootCooldown = 0.25;
@@ -130,7 +136,7 @@ void MainWindow::startBossBattle()
     m_enemies.clear();
     m_chests.clear();
 
-    m_bosses.append(BossEnemy(m_currentWave, m_screenWidth));
+    m_bosses.append(BossEnemy(m_currentWave + m_currentLevel * 2, m_screenWidth));
 
     m_effects.append(
         ParticleEffect::ring(QPointF(m_screenWidth / 2.0, 120.0),
@@ -187,7 +193,9 @@ void MainWindow::startNewGame()
     m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
 
     m_gameTimer->start(16);
-    m_waveTimer->start(2500);
+    m_waveTimer->stop();
+
+    spawnWave();
 
     setFocus();
     update();
@@ -220,7 +228,7 @@ void MainWindow::resumeGame()
     m_lastFrameTime = m_elapsedTimer.elapsed() / 1000.0;
 
     m_gameTimer->start(16);
-    m_waveTimer->start(2500);
+    m_waveTimer->stop();
 
     setFocus();
     update();
@@ -241,37 +249,78 @@ void MainWindow::returnToMenu()
     update();
 }
 
-void MainWindow::spawnWave() {
-    if (m_gameState != GameState::Playing) return;
-    if (m_bossActive) return;
-
-    if (m_currentWave % 3 == 0) {
-        startBossBattle();
-        m_currentWave++;
+void MainWindow::spawnWave()
+{
+    if (m_gameState != GameState::Playing) {
         return;
     }
-    const int enemyWidth = 118;
-    int enemyCount = QRandomGenerator::global()->bounded(3, 6); // 随机3~5个 [cite: 5]
-    for (int i = 0; i < enemyCount; ++i) {
-        qreal randomX = QRandomGenerator::global()->bounded(35, m_screenWidth - enemyWidth - 35);
-        qreal startY = -70.0 - (i * 70.0);
-        qreal enemySpeed = 80.0 + (m_currentWave * 3.0);
-        m_enemies.append(Enemy(QPointF(randomX, startY), enemySpeed, m_currentWave));
-    }
-    // 随机生成宝箱：第 2 波以后有 35% 概率出现
-if (m_currentWave >= 2 && QRandomGenerator::global()->bounded(100) < 35) {
-    Chest chest;
 
-    qreal chestX = QRandomGenerator::global()->bounded(
-        40,
-        m_screenWidth - 90
+    if (m_bossActive) {
+        return;
+    }
+
+    if (!m_enemies.isEmpty()) {
+        return;
+    }
+
+    if (m_wavesClearedInLevel >= 3) {
+        startBossBattle();
+        return;
+    }
+
+    const int enemyWidth = 118;
+
+    int enemyCount = QRandomGenerator::global()->bounded(
+        3 + m_currentLevel,
+        6 + m_currentLevel
     );
 
-    chest.spawnChest(chestX, -80.0, m_currentWave);
-    m_chests.append(chest);
+    if (enemyCount > 9) {
+        enemyCount = 9;
+    }
 
-    qDebug() << "Chest spawned at wave" << m_currentWave;
-}
+    qreal baseSpeed = 80.0 + m_currentLevel * 15.0 + m_currentWave * 2.0;
+
+    for (int i = 0; i < enemyCount; ++i) {
+        qreal randomX = QRandomGenerator::global()->bounded(
+            35,
+            m_screenWidth - enemyWidth - 35
+        );
+
+        qreal startY = -70.0 - (i * 70.0);
+        qreal enemySpeed = baseSpeed + QRandomGenerator::global()->bounded(0, 30);
+
+        m_enemies.append(
+            Enemy(QPointF(randomX, startY), enemySpeed, m_currentWave)
+        );
+    }
+
+    if (m_currentWave >= 2 &&
+        QRandomGenerator::global()->bounded(100) < 35) {
+        Chest chest;
+
+        qreal chestX = QRandomGenerator::global()->bounded(
+            40,
+            m_screenWidth - 90
+        );
+
+        chest.spawnChest(chestX, -80.0, m_currentWave);
+        m_chests.append(chest);
+
+        qDebug() << "Chest spawned at wave" << m_currentWave;
+    }
+
+    addFloatingText(QPointF(m_screenWidth / 2.0, 165.0),
+                    QString("LEVEL %1 - WAVE %2")
+                        .arg(m_currentLevel)
+                        .arg(m_wavesClearedInLevel + 1),
+                    QColor(255, 218, 92),
+                    20);
+
+    qDebug() << "Wave spawned:"
+             << "level =" << m_currentLevel
+             << "wave =" << m_currentWave
+             << "count =" << enemyCount;
 
     m_currentWave++;
 }
@@ -352,13 +401,20 @@ for (auto it = m_floatingTexts.begin(); it != m_floatingTexts.end();) {
     for (auto it = m_bosses.begin(); it != m_bosses.end();) {
     it->update(deltaTime, m_screenWidth);
 
-    if (it->getPosition().y() > m_screenHeight) {
-        it = m_bosses.erase(it);
-        m_bossActive = false;
-        m_waveTimer->start(2500);
-    } else {
-        ++it;
-    }
+if (it->getPosition().y() > m_screenHeight) {
+    it = m_bosses.erase(it);
+    m_bossActive = false;
+
+    m_currentLevel++;
+    m_wavesClearedInLevel = 0;
+    m_currentWave++;
+
+    m_waitingForNextWave = true;
+    m_nextWaveDelayTimer = 1.5;
+} else {
+    ++it;
+}
+
 }
 
 if (m_bossActive && !m_bosses.isEmpty()) {
@@ -393,8 +449,36 @@ if (m_bossActive && !m_bosses.isEmpty()) {
 
 
     // 3. 碰撞仲裁
-    checkCollisions();
-    update();
+    // 3. 碰撞仲裁
+checkCollisions();
+
+if (m_gameState == GameState::Playing &&
+    !m_bossActive &&
+    m_bosses.isEmpty() &&
+    m_enemies.isEmpty() &&
+    m_chests.isEmpty() &&
+    !m_waitingForNextWave) {
+
+    m_wavesClearedInLevel++;
+    m_waitingForNextWave = true;
+    m_nextWaveDelayTimer = 1.4;
+
+    qDebug() << "Wave cleared. Cleared in level ="
+             << m_wavesClearedInLevel;
+}
+
+if (m_waitingForNextWave) {
+    m_nextWaveDelayTimer -= deltaTime;
+
+    if (m_nextWaveDelayTimer <= 0.0) {
+        m_waitingForNextWave = false;
+        m_nextWaveDelayTimer = 0.0;
+        spawnWave();
+    }
+}
+
+update();
+
 }
 
 void MainWindow::checkCollisions() {
@@ -445,7 +529,7 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
 
             if (m_gameState == GameState::Playing) {
                 m_gameTimer->start(16);
-                m_waveTimer->start(2500);
+                m_waveTimer->stop();
             }
 
 
@@ -579,9 +663,20 @@ for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
             bossDestroyed = true;
             m_bossActive = false;
 
-            m_waveTimer->start(2500);
+            m_currentLevel++;
+            m_wavesClearedInLevel = 0;
 
-            qDebug() << "Boss defeated. Score =" << m_score;
+            m_waitingForNextWave = true;
+            m_nextWaveDelayTimer = 2.0;
+
+            addFloatingText(QPointF(m_screenWidth / 2.0, 230.0),
+                            QString("LEVEL %1").arg(m_currentLevel),
+                            QColor(255, 218, 92),
+                            24);
+
+            qDebug() << "Boss defeated. Score =" << m_score
+                    << "Next level =" << m_currentLevel;
+
         }
 
         if (shouldRemoveBullet) {
@@ -1280,8 +1375,9 @@ void MainWindow::drawHud(QPainter &painter)
 
     painter.setPen(QColor(255, 255, 255));
     painter.setFont(QFont("Arial", 14, QFont::Black));
-    painter.drawText(28, 39, QString("Score %1").arg(m_score));
-    painter.drawText(178, 39, QString("Weapon Lv: %1").arg(m_player.getWeaponLevel()));
+    painter.drawText(24, 39, QString("Score %1").arg(m_score));
+    painter.drawText(142, 39, QString("Lv %1").arg(m_currentLevel));
+    painter.drawText(205, 39, QString("Weapon %1").arg(m_player.getWeaponLevel()));
 
     QString hpText = "HP ";
     for (int i = 0; i < m_playerHp; ++i) {
@@ -1290,7 +1386,8 @@ void MainWindow::drawHud(QPainter &painter)
     if (m_playerHp <= 0) {
         hpText += "DEAD";
     }
-    painter.drawText(m_screenWidth - 118, 39, hpText);
+    painter.drawText(m_screenWidth - 95, 39, hpText);
+
 }
 
 

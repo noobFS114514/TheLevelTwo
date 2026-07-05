@@ -76,6 +76,11 @@ private:
     int m_highScore;
     int m_playerHp;
     int m_currentWave;
+    int m_currentLevel;
+    int m_wavesClearedInLevel;
+    bool m_waitingForNextWave;
+    qreal m_nextWaveDelayTimer;
+
     int m_sfxVolume;
     int m_musicVolume;
     bool m_fullscreenEnabled;
