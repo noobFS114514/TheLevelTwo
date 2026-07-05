@@ -213,6 +213,8 @@ void MainWindow::pauseGame()
 
     m_moveLeft = false;
     m_moveRight = false;
+    m_enemyBullets.clear();
+
 
     update();
 }
@@ -242,6 +244,8 @@ void MainWindow::returnToMenu()
 
     m_moveLeft = false;
     m_moveRight = false;
+    m_enemyBullets.clear();
+
 
     m_gameTimer->stop();
     m_waveTimer->stop();
@@ -728,6 +732,8 @@ playSfx();
 
     m_moveLeft = false;
     m_moveRight = false;
+    m_enemyBullets.clear();
+
    }
 
 }
@@ -766,6 +772,8 @@ playSfx();
 
             m_moveLeft = false;
             m_moveRight = false;
+            m_enemyBullets.clear();
+
         }
     }
 }
@@ -806,6 +814,8 @@ playSfx();
 
                 m_moveLeft = false;
                 m_moveRight = false;
+                m_enemyBullets.clear();
+
 
                 break;
             }
@@ -1123,18 +1133,6 @@ if (m_gameState == GameState::Settings) {
         return;
     }
 
-    // 临时测试武器升级，后续可以删掉
-    if (event->key() == Qt::Key_U) {
-        if (m_player.increaseWeaponLevel()) {
-            qDebug() << "Weapon upgraded:"
-                     << "level =" << m_player.getWeaponLevel()
-                     << "bullet count =" << m_player.getWeapon().getBulletCount();
-        } else {
-            qDebug() << "Weapon already at max level";
-        }
-
-        return;
-    }
 
     if (event->key() == Qt::Key_Space) {
         shootBullet();
@@ -1432,7 +1430,8 @@ void MainWindow::drawMenu(QPainter &painter)
     painter.setFont(QFont("Microsoft YaHei", 11));
     painter.drawText(QRectF(0, 470, m_screenWidth, 80),
                      Qt::AlignCenter,
-                     "操作：A/D 或方向键移动，Space 射击，ESC 暂停");
+                     "操作：A/D 或方向键移动，Space 射击，ESC 暂停，鼠标可点击菜单"
+);
 }
 
 void MainWindow::drawSettingsMenu(QPainter &painter)

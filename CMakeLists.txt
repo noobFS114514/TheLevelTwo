@@ -28,6 +28,7 @@ qt_add_executable(TheLevelTwo
     Codes/SaveManager.h
     Codes/BossEnemy.h
     Codes/EnemyBullet.h
+    Codes/FloatingText.h
 
 )
 
