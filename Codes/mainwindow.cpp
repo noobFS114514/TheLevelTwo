@@ -226,11 +226,13 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
 
     // 临时测试武器升级，后续由宝箱触发
 if (event->key() == Qt::Key_U && !m_isGameOver) {
-    m_player.increaseWeaponLevel();
-
-    qDebug() << "Weapon upgraded:"
-             << "level =" << m_player.getWeaponLevel()
-             << "bullet count =" << m_player.getWeapon().getBulletCount();
+    if (m_player.increaseWeaponLevel()) {
+        qDebug() << "Weapon upgraded:"
+                 << "level =" << m_player.getWeaponLevel()
+                 << "bullet count =" << m_player.getWeapon().getBulletCount();
+    } else {
+        qDebug() << "Weapon already at max level";
+    }
 
     return;
 }

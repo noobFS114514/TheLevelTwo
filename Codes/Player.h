@@ -29,9 +29,16 @@ int getWeaponLevel() const {
     return weaponLevel;
 }
 
-void increaseWeaponLevel() {
+bool increaseWeaponLevel() {
+    if (weaponLevel >= 3) {
+        return false;
+    }
+
     ++weaponLevel;
     weapon.upgradeBulletCount(1);
+    weapon.upgradeAttackSpeed(0.15);
+
+    return true;
 }
 
 qreal getFireCooldown() const {
