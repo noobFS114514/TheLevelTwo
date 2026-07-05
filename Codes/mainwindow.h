@@ -11,6 +11,7 @@
 #include "PowerUp.h"
 #include "ParticleEffect.h"
 #include "Chest.h"
+#include "SaveManager.h"
 
 
 QT_BEGIN_NAMESPACE
@@ -52,12 +53,14 @@ private:
     QList<Chest> m_chests;
     QList<ParticleEffect> m_effects;
     qreal m_hurtFlashTimer;
+    SaveManager m_saveManager;
 
     // A3 计分与状态变量
     int m_score;
     int m_playerHp;
     int m_currentWave; // 当前波次
     bool m_isGameOver;
+    bool m_highScoreSaved;
     bool m_moveLeft;
     bool m_moveRight;
     qreal m_shootCooldown;
@@ -70,6 +73,9 @@ private:
     void resetGame();       // 游戏初始化与重置
     void checkCollisions(); // A3核心：轴对齐矩形碰撞检测
     void shootBullet();     // A2核心：单发子弹生成
+    void finishGame();
+    void showSettingsDialog();
+    void applySavedSettings();
     void drawBackground(QPainter &painter);
     void drawPlayer(QPainter &painter);
     void drawHud(QPainter &painter);
