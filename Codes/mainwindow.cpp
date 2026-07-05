@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QtMath>
 #include <QMouseEvent>
+#include <QCoreApplication>
 
 
 MainWindow::MainWindow(QWidget *parent)
@@ -18,6 +19,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_gameTimer = new QTimer(this);
     m_waveTimer = new QTimer(this);
+    m_audio = new AudioManager(this);
+
 
     connect(m_gameTimer, &QTimer::timeout, this, &MainWindow::gameLoop);
     connect(m_waveTimer, &QTimer::timeout, this, &MainWindow::spawnWave);
@@ -27,6 +30,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_musicVolume = SaveManager::loadMusicVolume();
     m_fullscreenEnabled = SaveManager::loadFullscreen();
     m_selectedSetting = 0;
+
+    QString audioDir = QCoreApplication::applicationDirPath() + "/Assets/audio";
+    m_audio->load(audioDir);
+    m_audio->setVolumes(m_sfxVolume, m_musicVolume);
+    m_audio->playMusic();
 
     resetGame();
     applyWindowMode();
@@ -95,7 +103,12 @@ void MainWindow::updateHighScore()
 void MainWindow::saveSettings()
 {
     SaveManager::saveSettings(m_sfxVolume, m_musicVolume, m_fullscreenEnabled);
+
+    if (m_audio) {
+        m_audio->setVolumes(m_sfxVolume, m_musicVolume);
+    }
 }
+
 
 void MainWindow::applyWindowMode()
 {
@@ -111,12 +124,11 @@ void MainWindow::applyWindowMode()
 
 void MainWindow::playSfx()
 {
-    if (m_sfxVolume <= 0) {
-        return;
+    if (m_audio) {
+        m_audio->playPickup();
     }
-
-    QApplication::beep();
 }
+
 
 void MainWindow::addFloatingText(const QPointF& position,
                                  const QString& text,
@@ -153,7 +165,9 @@ void MainWindow::startBossBattle()
                 QColor(255, 80, 90),
                 26);
 
-playSfx();
+if (m_audio) {
+    m_audio->playBoss();
+}
 
     qDebug() << "Boss battle started at wave" << m_currentWave;
 }
@@ -599,6 +613,10 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
         if (chestIt->isDead()) {
             qDebug() << "Chest opened at wave" << chestIt->getWave();
 
+            if (m_audio) {
+                m_audio->playChest();
+            }
+
             m_gameTimer->stop();
             m_waveTimer->stop();
 
@@ -744,7 +762,9 @@ for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
                             QColor(255, 218, 92),
                             20);
 
-            playSfx();
+            if (m_audio) {
+                m_audio->playBoss();
+            }
 
             m_effects.append(
                 ParticleEffect::explosion(dropCenter, QColor(255, 80, 90), 48)
@@ -821,7 +841,10 @@ QRectF playerHitbox = playerBox;
                 QColor(255, 80, 90),
                 16);
 
-playSfx();
+if (m_audio) {
+    m_audio->playHit();
+}
+
 
    if (m_playerHp <= 0) {
     m_isGameOver = true;
@@ -860,8 +883,9 @@ for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end(); ++bossIt) {
                 QColor(255, 80, 90),
                 16);
 
-playSfx();
-
+        if (m_audio) {
+            m_audio->playHit();
+        }
 
         if (m_playerHp <= 0) {
             m_isGameOver = true;
@@ -900,7 +924,10 @@ playSfx();
                 QColor(255, 80, 90),
                 16);
 
-playSfx();
+if (m_audio) {
+    m_audio->playHit();
+}
+
 
 
             qDebug() << "Player hit by boss bullet. HP =" << m_playerHp;
@@ -945,8 +972,9 @@ for (auto powerIt = m_powerUps.begin(); powerIt != m_powerUps.end();) {
                 QColor(80, 220, 120),
                 15);
 
-playSfx();
-
+if (m_audio) {
+    m_audio->playPickup();
+}
 
     qDebug() << "PowerUp picked: HP +1";
 } else if (powerIt->getType() == PowerUpType::WeaponUpgrade) {
@@ -1387,6 +1415,9 @@ void MainWindow::shootBullet()
 
     m_player.getWeapon().fire(origin, m_bullets);
 
+    if (m_audio) {
+    m_audio->playShoot();
+}
     m_timeSinceLastShot = 0.0;
 
     qDebug() << "Space pressed:"

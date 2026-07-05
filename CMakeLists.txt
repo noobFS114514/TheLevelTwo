@@ -9,7 +9,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia)
 
 qt_add_executable(TheLevelTwo
     Codes/main.cpp
@@ -29,10 +29,18 @@ qt_add_executable(TheLevelTwo
     Codes/BossEnemy.h
     Codes/EnemyBullet.h
     Codes/FloatingText.h
+    Codes/AudioManager.h
+
 
 )
 
 target_link_libraries(TheLevelTwo
     PRIVATE
         Qt6::Widgets
+        Qt6::Multimedia
 )
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Assets")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/Assets"
+         DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+endif()

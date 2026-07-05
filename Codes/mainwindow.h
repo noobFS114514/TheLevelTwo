@@ -16,6 +16,8 @@
 #include "BossEnemy.h"
 #include "EnemyBullet.h"
 #include "FloatingText.h"
+#include "AudioManager.h"
+
 
 class QPainter;
 class QPaintEvent;
@@ -59,6 +61,7 @@ private:
 
     QTimer* m_gameTimer;
     QTimer* m_waveTimer;
+    AudioManager* m_audio;
     QElapsedTimer m_elapsedTimer;
     qreal m_lastFrameTime;
 
@@ -93,6 +96,7 @@ private:
     qreal m_shootCooldown;
     qreal m_timeSinceLastShot;
     qreal m_bossShootTimer;
+    int m_bossShotIndex;
     qreal m_hurtFlashTimer;
 
     const int m_screenWidth = 450;
