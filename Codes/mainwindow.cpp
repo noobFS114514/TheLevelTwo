@@ -374,7 +374,7 @@ void MainWindow::drawHud(QPainter &painter)
     painter.setPen(QColor(255, 255, 255));
     painter.setFont(QFont("Arial", 14, QFont::Black));
     painter.drawText(28, 39, QString("Score %1").arg(m_score));
-    painter.drawText(178, 39, "Level 1");
+    painter.drawText(178, 39, QString("Weapon Lv: %1").arg(m_player.getWeaponLevel()));
 
     QString hpText = "HP ";
     for (int i = 0; i < m_playerHp; ++i) {
