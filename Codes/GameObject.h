@@ -22,13 +22,17 @@ public:
 
     // 访问接口
     QPointF getPosition() const { return position; }
-    void setPosition(const QPointF& pos) { position = pos; }
-    QRectF getHitbox() const { return hitbox; }
+    void setPosition(const QPointF& pos) {
+    position = pos;
+    hitbox.moveTo(pos);
+}
 
-    // 补齐实现，防止链接器迷路
-    void setSpeed(qreal speedValue, GameObject* obj) {
-        if (obj) { obj->speed = speedValue; }
-    }
+QRectF getHitbox() const { return hitbox; }
+
+void setSpeed(qreal speedValue) {
+    speed = speedValue;
+}
+
 
     virtual void spawnObject(const QPointF& pos) { position = pos; }
 };
