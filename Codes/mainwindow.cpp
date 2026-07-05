@@ -60,6 +60,7 @@ void MainWindow::resetGame() {
     m_shootCooldown = 0.25;
     m_timeSinceLastShot = m_player.getFireCooldown();
     m_bossShootTimer = 0.0;
+    m_bossShotIndex = 0;
 
     m_enemies.clear();
     m_bosses.clear();
@@ -130,6 +131,9 @@ void MainWindow::startBossBattle()
 {
     m_bossActive = true;
     m_bossShootTimer = 0.0;
+    m_bossShotIndex = 0;
+    m_enemyBullets.clear();
+
 
     m_waveTimer->stop();
 
@@ -163,24 +167,100 @@ void MainWindow::spawnBossBullets()
     QRectF bossBox = m_bosses.first().getHitbox();
     QPointF origin(bossBox.center().x(), bossBox.bottom() - 4.0);
 
-    const int bulletCount = 7;
-    const qreal startAngle = 55.0;
-    const qreal endAngle = 125.0;
-    const qreal step = (endAngle - startAngle) / (bulletCount - 1);
+    m_bossShotIndex++;
+
+    int bulletCount = 3;
+qreal startAngle = 60.0;
+qreal endAngle = 120.0;
+qreal bulletSpeed = 145.0;
+
+if (m_currentLevel == 1) {
+    // 第一关：3 发，中等角度，主要让玩家学会躲
+    bulletCount = 3;
+    startAngle = 60.0;
+    endAngle = 120.0;
+    bulletSpeed = 145.0;
+} else if (m_currentLevel == 2) {
+    // 第二关：4 发，稍微变宽
+    bulletCount = 4;
+    startAngle = 55.0;
+    endAngle = 125.0;
+    bulletSpeed = 165.0;
+} else if (m_currentLevel == 3) {
+    // 第三关：5 发，形成弹幕感，但还不加太多瞄准弹
+    bulletCount = 5;
+    startAngle = 50.0;
+    endAngle = 130.0;
+    bulletSpeed = 185.0;
+} else {
+    // 第四关以后：逐渐接近飞机大战弹幕
+    bulletCount = 5 + qMin(m_currentLevel - 4, 3); // 最多 8 发
+    startAngle = 45.0;
+    endAngle = 135.0;
+    bulletSpeed = 200.0 + qMin(m_currentLevel * 7.0, 55.0);
+}
+
+
+    // 偶数轮稍微错开角度，让弹幕有变化，但不要一开始就太难
+    if (m_currentLevel >= 3 && m_bossShotIndex % 2 == 0) {
+    startAngle += 5.0;
+    endAngle += 5.0;
+}
+
+
+    const qreal step = (bulletCount <= 1)
+        ? 0.0
+        : (endAngle - startAngle) / (bulletCount - 1);
 
     for (int i = 0; i < bulletCount; ++i) {
         qreal angleDegree = startAngle + step * i;
         qreal angleRad = qDegreesToRadians(angleDegree);
 
         QPointF direction(qCos(angleRad), qSin(angleRad));
-        m_enemyBullets.append(EnemyBullet(origin, direction, 230.0));
+        m_enemyBullets.append(EnemyBullet(origin, direction, bulletSpeed));
+    }
+
+    // Level 3 开始：每隔一轮加一颗瞄准玩家的子弹
+    if (m_currentLevel >= 4 && m_bossShotIndex % 2 == 1) {
+        QPointF playerCenter = m_player.getHitbox().center();
+        QPointF aimDirection(
+            playerCenter.x() - origin.x(),
+            playerCenter.y() - origin.y()
+        );
+
+        m_enemyBullets.append(
+            EnemyBullet(origin, aimDirection, bulletSpeed + 20.0)
+        );
+    }
+
+    // Level 5 开始：偶尔加一颗偏移瞄准弹，形成更像飞机大战的压迫感
+    if (m_currentLevel >= 5 && m_bossShotIndex % 3 == 0) {
+        QPointF playerCenter = m_player.getHitbox().center();
+
+        QPointF leftAim(
+            playerCenter.x() - origin.x() - 55.0,
+            playerCenter.y() - origin.y()
+        );
+
+        QPointF rightAim(
+            playerCenter.x() - origin.x() + 55.0,
+            playerCenter.y() - origin.y()
+        );
+
+        m_enemyBullets.append(EnemyBullet(origin, leftAim, bulletSpeed + 10.0));
+        m_enemyBullets.append(EnemyBullet(origin, rightAim, bulletSpeed + 10.0));
     }
 
     m_effects.append(
         ParticleEffect::ring(origin, QColor(255, 90, 110), 18)
     );
 
-    qDebug() << "Boss fired" << bulletCount << "bullets";
+    qDebug() << "Boss fired"
+             << bulletCount
+             << "base bullets at level"
+             << m_currentLevel
+             << "shot index"
+             << m_bossShotIndex;
 }
 
 
@@ -424,12 +504,17 @@ if (it->getPosition().y() > m_screenHeight) {
 if (m_bossActive && !m_bosses.isEmpty()) {
     m_bossShootTimer += deltaTime;
 
-    if (m_bossShootTimer >= 1.4) {
+    qreal bossShootInterval = 2.4 - 0.18 * (m_currentLevel - 1);
+
+    if (bossShootInterval < 1.05) {
+        bossShootInterval = 1.05;
+    }
+
+    if (m_bossShootTimer >= bossShootInterval) {
         m_bossShootTimer = 0.0;
         spawnBossBullets();
     }
 }
-
 
     for (auto it = m_powerUps.begin(); it != m_powerUps.end();) {
     it->moveDown(deltaTime);
@@ -490,6 +575,11 @@ void MainWindow::checkCollisions() {
 
     // 子弹 VS 宝箱
 for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
+    if (chestIt->getHitbox().bottom() < 10.0) {
+        ++chestIt;
+        continue;
+    }
+
     bool chestRemoved = false;
 
     for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end();) {
@@ -550,6 +640,11 @@ for (auto chestIt = m_chests.begin(); chestIt != m_chests.end();) {
     
     // 子弹 VS 敌人：伤害、暴击、穿透全部生效
 for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
+    if (enemyIt->getHitbox().bottom() < 10.0) {
+        ++enemyIt;
+        continue;
+    }
+
     bool enemyDestroyed = false;
 
     for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end(); ) {
@@ -613,6 +708,11 @@ for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
 
 // 子弹 VS Boss
 for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
+    if (bossIt->getHitbox().bottom() < 10.0) {
+        ++bossIt;
+        continue;
+    }
+
     bool bossDestroyed = false;
 
     for (auto bulletIt = m_bullets.begin(); bulletIt != m_bullets.end();) {
@@ -666,6 +766,8 @@ for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
             bossIt = m_bosses.erase(bossIt);
             bossDestroyed = true;
             m_bossActive = false;
+            m_enemyBullets.clear();
+
 
             m_currentLevel++;
             m_wavesClearedInLevel = 0;
@@ -700,8 +802,8 @@ for (auto bossIt = m_bosses.begin(); bossIt != m_bosses.end();) {
 }
 
     // 玩家 VS 敌人 [cite: 6]
-    QRectF playerBox = m_player.getHitbox();
-    QRectF playerHitbox = playerBox;
+    QRectF playerBox = m_player.getCollisionBox();
+QRectF playerHitbox = playerBox;
 
     for (auto enemyIt = m_enemies.begin(); enemyIt != m_enemies.end(); ) {
         if (enemyIt->getHitbox().intersects(playerBox)) {
