@@ -1,112 +1,111 @@
-#pragma once
+#ifndef SAVEMANAGER_H
+#define SAVEMANAGER_H
 
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFile>
+#include <QDir>
 #include <QStandardPaths>
+#include <QString>
 
-class SaveManager {
+class SaveManager
+{
 public:
-    struct Settings {
-        int soundVolume = 70;
-        int musicVolume = 60;
-        bool fullscreen = false;
-    };
+    static QString saveFilePath()
+    {
+        QString dirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 
-    SaveManager() {
-        const QString dirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        m_filePath = dirPath.isEmpty()
-            ? QStringLiteral("save.json")
-            : dirPath + QStringLiteral("/save.json");
+        if (dirPath.isEmpty()) {
+            dirPath = QDir::currentPath();
+        }
+
+        QDir dir(dirPath);
+        if (!dir.exists()) {
+            dir.mkpath(".");
+        }
+
+        return dir.filePath("save.json");
     }
 
-    bool load() {
-        QFile file(m_filePath);
+    static QJsonObject loadObject()
+    {
+        QFile file(saveFilePath());
+
         if (!file.exists()) {
-            return save();
+            return QJsonObject();
         }
 
         if (!file.open(QIODevice::ReadOnly)) {
-            return false;
+            return QJsonObject();
         }
 
-        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-        if (!doc.isObject()) {
-            return false;
+        QByteArray data = file.readAll();
+        file.close();
+
+        QJsonParseError error;
+        QJsonDocument doc = QJsonDocument::fromJson(data, &error);
+
+        if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+            return QJsonObject();
         }
 
-        const QJsonObject root = doc.object();
-        m_highScore = root.value(QStringLiteral("highScore")).toInt(0);
-
-        const QJsonObject settingsObj = root.value(QStringLiteral("settings")).toObject();
-        m_settings.soundVolume = clampVolume(settingsObj.value(QStringLiteral("soundVolume")).toInt(70));
-        m_settings.musicVolume = clampVolume(settingsObj.value(QStringLiteral("musicVolume")).toInt(60));
-        m_settings.fullscreen = settingsObj.value(QStringLiteral("fullscreen")).toBool(false);
-
-        return true;
+        return doc.object();
     }
 
-    bool save() const {
-        const QFileInfo info(m_filePath);
-        if (!QDir().mkpath(info.absolutePath())) {
-            return false;
-        }
+    static void saveObject(const QJsonObject& obj)
+    {
+        QFile file(saveFilePath());
 
-        QFile file(m_filePath);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            return false;
+            return;
         }
 
-        QJsonObject settingsObj;
-        settingsObj.insert(QStringLiteral("soundVolume"), m_settings.soundVolume);
-        settingsObj.insert(QStringLiteral("musicVolume"), m_settings.musicVolume);
-        settingsObj.insert(QStringLiteral("fullscreen"), m_settings.fullscreen);
-
-        QJsonObject root;
-        root.insert(QStringLiteral("highScore"), m_highScore);
-        root.insert(QStringLiteral("settings"), settingsObj);
-
-        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-        return true;
+        QJsonDocument doc(obj);
+        file.write(doc.toJson(QJsonDocument::Indented));
+        file.close();
     }
 
-    int highScore() const {
-        return m_highScore;
+    static int loadHighScore()
+    {
+        QJsonObject obj = loadObject();
+        return obj.value("highScore").toInt(0);
     }
 
-    bool updateHighScore(int score) {
-        if (score <= m_highScore) {
-            return false;
-        }
-
-        m_highScore = score;
-        return true;
+    static void saveHighScore(int highScore)
+    {
+        QJsonObject obj = loadObject();
+        obj["highScore"] = highScore;
+        saveObject(obj);
     }
 
-    Settings settings() const {
-        return m_settings;
+    static int loadSfxVolume()
+    {
+        QJsonObject obj = loadObject();
+        return obj.value("sfxVolume").toInt(70);
     }
 
-    void setSettings(const Settings& settings) {
-        m_settings.soundVolume = clampVolume(settings.soundVolume);
-        m_settings.musicVolume = clampVolume(settings.musicVolume);
-        m_settings.fullscreen = settings.fullscreen;
+    static int loadMusicVolume()
+    {
+        QJsonObject obj = loadObject();
+        return obj.value("musicVolume").toInt(60);
     }
 
-    QString filePath() const {
-        return m_filePath;
+    static bool loadFullscreen()
+    {
+        QJsonObject obj = loadObject();
+        return obj.value("fullscreen").toBool(false);
     }
 
-private:
-    static int clampVolume(int value) {
-        if (value < 0) return 0;
-        if (value > 100) return 100;
-        return value;
-    }
+    static void saveSettings(int sfxVolume, int musicVolume, bool fullscreen)
+    {
+        QJsonObject obj = loadObject();
 
-    QString m_filePath;
-    int m_highScore = 0;
-    Settings m_settings;
+        obj["sfxVolume"] = sfxVolume;
+        obj["musicVolume"] = musicVolume;
+        obj["fullscreen"] = fullscreen;
+
+        saveObject(obj);
+    }
 };
+
+#endif // SAVEMANAGER_H
